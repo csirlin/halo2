@@ -136,6 +136,7 @@ impl<E, F: Field, B: Basis> Evaluator<E, F, B> {
         F: WithSmallOrderMulGroup<3>,
         B: BasisOps,
     {
+        println!("AST IS: {:#?}", ast);
         // We're working in a single basis, so all polynomials are the same length.
         let poly_len = self.polys.first().unwrap().len();
         let (chunk_size, _num_chunks) = get_chunk_params(poly_len);

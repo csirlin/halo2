@@ -584,6 +584,8 @@ pub fn create_proof<
             },
         );
 
+    // println!("AST = {:#?}", expressions);
+
     // Construct the vanishing argument's h(X) commitments
     let vanishing = vanishing.construct(
         params,
