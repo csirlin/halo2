@@ -4,8 +4,9 @@ use group::ff::Field;
 use halo2_proofs::{
     circuit::{AssignedCell, Chip, Layouter, Region, SimpleFloorPlanner, Value},
     plonk::{Advice, Circuit, Column, ConstraintSystem, Error, Fixed, Instance, Selector},
-    poly::Rotation,
+    poly::Rotation, dev::MockProver,
 };
+use pasta_curves::Fp;
 
 // ANCHOR: instructions
 trait NumericInstructions<F: Field>: Chip<F> {
@@ -336,4 +337,59 @@ fn main() {
     let prover = MockProver::run(k, &circuit, vec![public_inputs]).unwrap();
     assert!(prover.verify().is_err());
     // ANCHOR_END: test-circuit
+
+    print_class(prover)
+}
+
+fn print_class(prover: MockProver<Fp>) {
+    println!("FULL PROVER: \n {:#?}", prover);
+}
+
+fn print_data(prover: MockProver<Fp>) {
+    println!("\nTest prints");
+    println!("\tprover.n = {}", prover.n);
+    println!("\tprover.k = {}", prover.k);
+    println!(
+        "\tprover.cs.num_fixed_columns = {}",
+        prover.cs.num_fixed_columns
+    );
+    println!(
+        "\tprover.cs.num_advice_columns = {}",
+        prover.cs.num_advice_columns
+    );
+    println!(
+        "\tprover.cs.num_instance_columns = {}",
+        prover.cs.num_instance_columns
+    );
+    println!("\tprover.cs.num_selectors = {}", prover.cs.num_selectors);
+    println!("\tprover.cs.selector_map = {:?}", prover.cs.selector_map);
+    println!("\tprover.cs.gates = {:?}", prover.cs.gates);
+    println!(
+        "\tprover.cs.advice_queries = {:?}",
+        prover.cs.advice_queries
+    );
+    println!(
+        "\tprover.cs.num_advice_queries = {:?}",
+        prover.cs.num_advice_queries
+    );
+    println!(
+        "\tprover.cs.instance_queries = {:?}",
+        prover.cs.instance_queries
+    );
+    println!("\tprover.cs.fixed_queries = {:?}", prover.cs.fixed_queries);
+    println!("\tprover.cs.permutation = {:?}", prover.cs.permutation);
+    println!("\tprover.cs.lookups = {:?}", prover.cs.lookups);
+    println!("\tprover.cs.constants = {:?}", prover.cs.constants);
+    println!(
+        "\tprover.cs.minimum_degree = {:?}",
+        prover.cs.minimum_degree
+    );
+    println!("\tprover.regions = {:?}", prover.regions);
+    println!("\tprover.current_region = {:?}", prover.current_region);
+    println!("\tprover.fixed = {:?}", prover.fixed);
+    println!("\tprover.advice = {:?}", prover.advice);
+    println!("\tprover.instance = {:?}", prover.instance);
+    println!("\tprover.selectors = {:?}", prover.selectors);
+    println!("\tprover.permutation = {:?}", prover.permutation);
+    println!("\tprover.usable_rows = {:?}", prover.usable_rows);
 }

@@ -38,8 +38,9 @@ mod graph;
 #[cfg_attr(docsrs, doc(cfg(feature = "dev-graph")))]
 pub use graph::{circuit_dot_graph, layout::CircuitLayout};
 
+///
 #[derive(Debug)]
-struct Region {
+pub struct Region {
     /// The name of the region. Not required to be unique.
     name: String,
     /// The columns involved in this region.
@@ -74,12 +75,12 @@ impl Region {
 
 /// The value of a particular cell within the circuit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum CellValue<F: Field> {
-    // An unassigned cell.
+pub enum CellValue<F: Field> {
+    /// An unassigned cell.
     Unassigned,
-    // A cell that has been assigned a value.
+    /// A cell that has been assigned a value.
     Assigned(F),
-    // A unique poisoned cell.
+    /// A unique poisoned cell.
     Poison(usize),
 }
 
@@ -270,34 +271,42 @@ impl<F: Field> Mul<F> for Value<F> {
 /// ```
 #[derive(Debug)]
 pub struct MockProver<F: Field> {
-    k: u32,
-    n: u32,
-    cs: ConstraintSystem<F>,
+    ///k
+    pub k: u32,
+    ///n
+    pub n: u32,
+    ///cs
+    pub cs: ConstraintSystem<F>,
 
     /// The regions in the circuit.
-    regions: Vec<Region>,
+    pub regions: Vec<Region>,
     /// The current region being assigned to. Will be `None` after the circuit has been
     /// synthesized.
-    current_region: Option<Region>,
+    pub current_region: Option<Region>,
 
-    // The fixed cells in the circuit, arranged as [column][row].
-    fixed: Vec<Vec<CellValue<F>>>,
-    // The advice cells in the circuit, arranged as [column][row].
-    advice: Vec<Vec<CellValue<F>>>,
-    // The instance cells in the circuit, arranged as [column][row].
-    instance: Vec<Vec<InstanceValue<F>>>,
+    /// The fixed cells in the circuit, arranged as [column][row].
+    pub fixed: Vec<Vec<CellValue<F>>>,
+    /// The advice cells in the circuit, arranged as [column][row].
+    pub advice: Vec<Vec<CellValue<F>>>,
+    /// The instance cells in the circuit, arranged as [column][row].
+    pub instance: Vec<Vec<InstanceValue<F>>>,
 
-    selectors: Vec<Vec<bool>>,
+    ///
+    pub selectors: Vec<Vec<bool>>,
 
-    permutation: permutation::keygen::Assembly,
+    ///
+    pub permutation: permutation::keygen::Assembly,
 
-    // A range of available rows for assignment and copies.
-    usable_rows: Range<usize>,
+    /// A range of available rows for assignment and copies.
+    pub usable_rows: Range<usize>,
 }
 
+///
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum InstanceValue<F: Field> {
+pub enum InstanceValue<F: Field> {
+    ///
     Assigned(F),
+    ///
     Padding,
 }
 

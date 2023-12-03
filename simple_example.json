@@ -1,0 +1,1244 @@
+MockProver {
+    k: 4,
+    n: 16,
+    cs: ConstraintSystem {
+        num_fixed_columns: 2,
+        num_advice_columns: 2,
+        num_instance_columns: 1,
+        num_selectors: 1,
+        selector_map: [
+            Column {
+                index: 1,
+                column_type: Fixed,
+            },
+        ],
+        gates: [
+            Gate {
+                name: "mul",
+                constraint_names: [
+                    "",
+                ],
+                polys: [
+                    Product(
+                        Fixed {
+                            query_index: 1,
+                            column_index: 1,
+                            rotation: Rotation(
+                                0,
+                            ),
+                        },
+                        Sum(
+                            Product(
+                                Advice {
+                                    query_index: 0,
+                                    column_index: 0,
+                                    rotation: Rotation(
+                                        0,
+                                    ),
+                                },
+                                Advice {
+                                    query_index: 1,
+                                    column_index: 1,
+                                    rotation: Rotation(
+                                        0,
+                                    ),
+                                },
+                            ),
+                            Negated(
+                                Advice {
+                                    query_index: 2,
+                                    column_index: 0,
+                                    rotation: Rotation(
+                                        1,
+                                    ),
+                                },
+                            ),
+                        ),
+                    ),
+                ],
+                queried_selectors: [
+                    Selector(
+                        0,
+                        true,
+                    ),
+                ],
+                queried_cells: [
+                    VirtualCell {
+                        column: Column {
+                            index: 0,
+                            column_type: Advice,
+                        },
+                        rotation: Rotation(
+                            0,
+                        ),
+                    },
+                    VirtualCell {
+                        column: Column {
+                            index: 1,
+                            column_type: Advice,
+                        },
+                        rotation: Rotation(
+                            0,
+                        ),
+                    },
+                    VirtualCell {
+                        column: Column {
+                            index: 0,
+                            column_type: Advice,
+                        },
+                        rotation: Rotation(
+                            1,
+                        ),
+                    },
+                ],
+            },
+        ],
+        advice_queries: [
+            (
+                Column {
+                    index: 0,
+                    column_type: Advice,
+                },
+                Rotation(
+                    0,
+                ),
+            ),
+            (
+                Column {
+                    index: 1,
+                    column_type: Advice,
+                },
+                Rotation(
+                    0,
+                ),
+            ),
+            (
+                Column {
+                    index: 0,
+                    column_type: Advice,
+                },
+                Rotation(
+                    1,
+                ),
+            ),
+        ],
+        num_advice_queries: [
+            2,
+            1,
+        ],
+        instance_queries: [
+            (
+                Column {
+                    index: 0,
+                    column_type: Instance,
+                },
+                Rotation(
+                    0,
+                ),
+            ),
+        ],
+        fixed_queries: [
+            (
+                Column {
+                    index: 0,
+                    column_type: Fixed,
+                },
+                Rotation(
+                    0,
+                ),
+            ),
+            (
+                Column {
+                    index: 1,
+                    column_type: Fixed,
+                },
+                Rotation(
+                    0,
+                ),
+            ),
+        ],
+        permutation: Argument {
+            columns: [
+                Column {
+                    index: 0,
+                    column_type: Instance,
+                },
+                Column {
+                    index: 0,
+                    column_type: Fixed,
+                },
+                Column {
+                    index: 0,
+                    column_type: Advice,
+                },
+                Column {
+                    index: 1,
+                    column_type: Advice,
+                },
+            ],
+        },
+        lookups: [],
+        constants: [
+            Column {
+                index: 0,
+                column_type: Fixed,
+            },
+        ],
+        minimum_degree: None,
+    },
+    regions: [
+        Region {
+            name: "load private",
+            columns: {
+                Column {
+                    index: 0,
+                    column_type: Advice,
+                },
+            },
+            rows: Some(
+                (
+                    0,
+                    0,
+                ),
+            ),
+            enabled_selectors: {},
+            cells: [
+                (
+                    Column {
+                        index: 0,
+                        column_type: Advice,
+                    },
+                    0,
+                ),
+            ],
+        },
+        Region {
+            name: "load private",
+            columns: {
+                Column {
+                    index: 0,
+                    column_type: Advice,
+                },
+            },
+            rows: Some(
+                (
+                    1,
+                    1,
+                ),
+            ),
+            enabled_selectors: {},
+            cells: [
+                (
+                    Column {
+                        index: 0,
+                        column_type: Advice,
+                    },
+                    1,
+                ),
+            ],
+        },
+        Region {
+            name: "load constant",
+            columns: {
+                Column {
+                    index: 0,
+                    column_type: Advice,
+                },
+            },
+            rows: Some(
+                (
+                    2,
+                    2,
+                ),
+            ),
+            enabled_selectors: {},
+            cells: [
+                (
+                    Column {
+                        index: 0,
+                        column_type: Advice,
+                    },
+                    2,
+                ),
+            ],
+        },
+        Region {
+            name: "mul",
+            columns: {
+                Column {
+                    index: 0,
+                    column_type: Advice,
+                },
+                Column {
+                    index: 1,
+                    column_type: Advice,
+                },
+            },
+            rows: Some(
+                (
+                    3,
+                    4,
+                ),
+            ),
+            enabled_selectors: {
+                Selector(
+                    0,
+                    true,
+                ): [
+                    3,
+                ],
+            },
+            cells: [
+                (
+                    Column {
+                        index: 0,
+                        column_type: Advice,
+                    },
+                    3,
+                ),
+                (
+                    Column {
+                        index: 1,
+                        column_type: Advice,
+                    },
+                    3,
+                ),
+                (
+                    Column {
+                        index: 0,
+                        column_type: Advice,
+                    },
+                    4,
+                ),
+            ],
+        },
+        Region {
+            name: "mul",
+            columns: {
+                Column {
+                    index: 0,
+                    column_type: Advice,
+                },
+                Column {
+                    index: 1,
+                    column_type: Advice,
+                },
+            },
+            rows: Some(
+                (
+                    5,
+                    6,
+                ),
+            ),
+            enabled_selectors: {
+                Selector(
+                    0,
+                    true,
+                ): [
+                    5,
+                ],
+            },
+            cells: [
+                (
+                    Column {
+                        index: 0,
+                        column_type: Advice,
+                    },
+                    5,
+                ),
+                (
+                    Column {
+                        index: 1,
+                        column_type: Advice,
+                    },
+                    5,
+                ),
+                (
+                    Column {
+                        index: 0,
+                        column_type: Advice,
+                    },
+                    6,
+                ),
+            ],
+        },
+        Region {
+            name: "mul",
+            columns: {
+                Column {
+                    index: 1,
+                    column_type: Advice,
+                },
+                Column {
+                    index: 0,
+                    column_type: Advice,
+                },
+            },
+            rows: Some(
+                (
+                    7,
+                    8,
+                ),
+            ),
+            enabled_selectors: {
+                Selector(
+                    0,
+                    true,
+                ): [
+                    7,
+                ],
+            },
+            cells: [
+                (
+                    Column {
+                        index: 0,
+                        column_type: Advice,
+                    },
+                    7,
+                ),
+                (
+                    Column {
+                        index: 1,
+                        column_type: Advice,
+                    },
+                    7,
+                ),
+                (
+                    Column {
+                        index: 0,
+                        column_type: Advice,
+                    },
+                    8,
+                ),
+            ],
+        },
+    ],
+    current_region: None,
+    fixed: [
+        [
+            Assigned(
+                0x000000000000000000000000000000000000000000000000000000000000cccc,
+            ),
+            Unassigned,
+            Unassigned,
+            Unassigned,
+            Unassigned,
+            Unassigned,
+            Unassigned,
+            Unassigned,
+            Unassigned,
+            Unassigned,
+            Unassigned,
+            Unassigned,
+            Unassigned,
+            Unassigned,
+            Unassigned,
+            Unassigned,
+        ],
+        [
+            Assigned(
+                0x0000000000000000000000000000000000000000000000000000000000000000,
+            ),
+            Assigned(
+                0x0000000000000000000000000000000000000000000000000000000000000000,
+            ),
+            Assigned(
+                0x0000000000000000000000000000000000000000000000000000000000000000,
+            ),
+            Assigned(
+                0x0000000000000000000000000000000000000000000000000000000000000001,
+            ),
+            Assigned(
+                0x0000000000000000000000000000000000000000000000000000000000000000,
+            ),
+            Assigned(
+                0x0000000000000000000000000000000000000000000000000000000000000001,
+            ),
+            Assigned(
+                0x0000000000000000000000000000000000000000000000000000000000000000,
+            ),
+            Assigned(
+                0x0000000000000000000000000000000000000000000000000000000000000001,
+            ),
+            Assigned(
+                0x0000000000000000000000000000000000000000000000000000000000000000,
+            ),
+            Assigned(
+                0x0000000000000000000000000000000000000000000000000000000000000000,
+            ),
+            Assigned(
+                0x0000000000000000000000000000000000000000000000000000000000000000,
+            ),
+            Assigned(
+                0x0000000000000000000000000000000000000000000000000000000000000000,
+            ),
+            Assigned(
+                0x0000000000000000000000000000000000000000000000000000000000000000,
+            ),
+            Assigned(
+                0x0000000000000000000000000000000000000000000000000000000000000000,
+            ),
+            Assigned(
+                0x0000000000000000000000000000000000000000000000000000000000000000,
+            ),
+            Assigned(
+                0x0000000000000000000000000000000000000000000000000000000000000000,
+            ),
+        ],
+    ],
+    advice: [
+        [
+            Assigned(
+                0x000000000000000000000000000000000000000000000000000000000000aaaa,
+            ),
+            Assigned(
+                0x000000000000000000000000000000000000000000000000000000000000bbbb,
+            ),
+            Assigned(
+                0x000000000000000000000000000000000000000000000000000000000000cccc,
+            ),
+            Assigned(
+                0x000000000000000000000000000000000000000000000000000000000000aaaa,
+            ),
+            Assigned(
+                0x000000000000000000000000000000000000000000000000000000007d26d82e,
+            ),
+            Assigned(
+                0x000000000000000000000000000000000000000000000000000000007d26d82e,
+            ),
+            Assigned(
+                0x0000000000000000000000000000000000000000000000003d2ef501d035a844,
+            ),
+            Assigned(
+                0x000000000000000000000000000000000000000000000000000000000000cccc,
+            ),
+            Assigned(
+                0x0000000000000000000000000000000000000000000030f22ca8af5cacd84630,
+            ),
+            Unassigned,
+            Poison(
+                10,
+            ),
+            Poison(
+                11,
+            ),
+            Poison(
+                12,
+            ),
+            Poison(
+                13,
+            ),
+            Poison(
+                14,
+            ),
+            Poison(
+                15,
+            ),
+        ],
+        [
+            Unassigned,
+            Unassigned,
+            Unassigned,
+            Assigned(
+                0x000000000000000000000000000000000000000000000000000000000000bbbb,
+            ),
+            Unassigned,
+            Assigned(
+                0x000000000000000000000000000000000000000000000000000000007d26d82e,
+            ),
+            Unassigned,
+            Assigned(
+                0x0000000000000000000000000000000000000000000000003d2ef501d035a844,
+            ),
+            Unassigned,
+            Unassigned,
+            Poison(
+                10,
+            ),
+            Poison(
+                11,
+            ),
+            Poison(
+                12,
+            ),
+            Poison(
+                13,
+            ),
+            Poison(
+                14,
+            ),
+            Poison(
+                15,
+            ),
+        ],
+    ],
+    instance: [
+        [
+            Assigned(
+                0x0000000000000000000000000000000000000000000030f22ca8af5cacd84631,
+            ),
+            Padding,
+            Padding,
+            Padding,
+            Padding,
+            Padding,
+            Padding,
+            Padding,
+            Padding,
+            Padding,
+            Padding,
+            Padding,
+            Padding,
+            Padding,
+            Padding,
+            Padding,
+        ],
+    ],
+    selectors: [
+        [
+            false,
+            false,
+            false,
+            true,
+            false,
+            true,
+            false,
+            true,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+        ],
+    ],
+    permutation: Assembly {
+        columns: [
+            Column {
+                index: 0,
+                column_type: Instance,
+            },
+            Column {
+                index: 0,
+                column_type: Fixed,
+            },
+            Column {
+                index: 0,
+                column_type: Advice,
+            },
+            Column {
+                index: 1,
+                column_type: Advice,
+            },
+        ],
+        mapping: [
+            [
+                (
+                    2,
+                    8,
+                ),
+                (
+                    0,
+                    1,
+                ),
+                (
+                    0,
+                    2,
+                ),
+                (
+                    0,
+                    3,
+                ),
+                (
+                    0,
+                    4,
+                ),
+                (
+                    0,
+                    5,
+                ),
+                (
+                    0,
+                    6,
+                ),
+                (
+                    0,
+                    7,
+                ),
+                (
+                    0,
+                    8,
+                ),
+                (
+                    0,
+                    9,
+                ),
+                (
+                    0,
+                    10,
+                ),
+                (
+                    0,
+                    11,
+                ),
+                (
+                    0,
+                    12,
+                ),
+                (
+                    0,
+                    13,
+                ),
+                (
+                    0,
+                    14,
+                ),
+                (
+                    0,
+                    15,
+                ),
+            ],
+            [
+                (
+                    2,
+                    2,
+                ),
+                (
+                    1,
+                    1,
+                ),
+                (
+                    1,
+                    2,
+                ),
+                (
+                    1,
+                    3,
+                ),
+                (
+                    1,
+                    4,
+                ),
+                (
+                    1,
+                    5,
+                ),
+                (
+                    1,
+                    6,
+                ),
+                (
+                    1,
+                    7,
+                ),
+                (
+                    1,
+                    8,
+                ),
+                (
+                    1,
+                    9,
+                ),
+                (
+                    1,
+                    10,
+                ),
+                (
+                    1,
+                    11,
+                ),
+                (
+                    1,
+                    12,
+                ),
+                (
+                    1,
+                    13,
+                ),
+                (
+                    1,
+                    14,
+                ),
+                (
+                    1,
+                    15,
+                ),
+            ],
+            [
+                (
+                    2,
+                    3,
+                ),
+                (
+                    3,
+                    3,
+                ),
+                (
+                    2,
+                    7,
+                ),
+                (
+                    2,
+                    0,
+                ),
+                (
+                    3,
+                    5,
+                ),
+                (
+                    2,
+                    4,
+                ),
+                (
+                    3,
+                    7,
+                ),
+                (
+                    1,
+                    0,
+                ),
+                (
+                    0,
+                    0,
+                ),
+                (
+                    2,
+                    9,
+                ),
+                (
+                    2,
+                    10,
+                ),
+                (
+                    2,
+                    11,
+                ),
+                (
+                    2,
+                    12,
+                ),
+                (
+                    2,
+                    13,
+                ),
+                (
+                    2,
+                    14,
+                ),
+                (
+                    2,
+                    15,
+                ),
+            ],
+            [
+                (
+                    3,
+                    0,
+                ),
+                (
+                    3,
+                    1,
+                ),
+                (
+                    3,
+                    2,
+                ),
+                (
+                    2,
+                    1,
+                ),
+                (
+                    3,
+                    4,
+                ),
+                (
+                    2,
+                    5,
+                ),
+                (
+                    3,
+                    6,
+                ),
+                (
+                    2,
+                    6,
+                ),
+                (
+                    3,
+                    8,
+                ),
+                (
+                    3,
+                    9,
+                ),
+                (
+                    3,
+                    10,
+                ),
+                (
+                    3,
+                    11,
+                ),
+                (
+                    3,
+                    12,
+                ),
+                (
+                    3,
+                    13,
+                ),
+                (
+                    3,
+                    14,
+                ),
+                (
+                    3,
+                    15,
+                ),
+            ],
+        ],
+        aux: [
+            [
+                (
+                    2,
+                    8,
+                ),
+                (
+                    0,
+                    1,
+                ),
+                (
+                    0,
+                    2,
+                ),
+                (
+                    0,
+                    3,
+                ),
+                (
+                    0,
+                    4,
+                ),
+                (
+                    0,
+                    5,
+                ),
+                (
+                    0,
+                    6,
+                ),
+                (
+                    0,
+                    7,
+                ),
+                (
+                    0,
+                    8,
+                ),
+                (
+                    0,
+                    9,
+                ),
+                (
+                    0,
+                    10,
+                ),
+                (
+                    0,
+                    11,
+                ),
+                (
+                    0,
+                    12,
+                ),
+                (
+                    0,
+                    13,
+                ),
+                (
+                    0,
+                    14,
+                ),
+                (
+                    0,
+                    15,
+                ),
+            ],
+            [
+                (
+                    1,
+                    0,
+                ),
+                (
+                    1,
+                    1,
+                ),
+                (
+                    1,
+                    2,
+                ),
+                (
+                    1,
+                    3,
+                ),
+                (
+                    1,
+                    4,
+                ),
+                (
+                    1,
+                    5,
+                ),
+                (
+                    1,
+                    6,
+                ),
+                (
+                    1,
+                    7,
+                ),
+                (
+                    1,
+                    8,
+                ),
+                (
+                    1,
+                    9,
+                ),
+                (
+                    1,
+                    10,
+                ),
+                (
+                    1,
+                    11,
+                ),
+                (
+                    1,
+                    12,
+                ),
+                (
+                    1,
+                    13,
+                ),
+                (
+                    1,
+                    14,
+                ),
+                (
+                    1,
+                    15,
+                ),
+            ],
+            [
+                (
+                    2,
+                    3,
+                ),
+                (
+                    3,
+                    3,
+                ),
+                (
+                    1,
+                    0,
+                ),
+                (
+                    2,
+                    3,
+                ),
+                (
+                    2,
+                    5,
+                ),
+                (
+                    2,
+                    5,
+                ),
+                (
+                    3,
+                    7,
+                ),
+                (
+                    1,
+                    0,
+                ),
+                (
+                    2,
+                    8,
+                ),
+                (
+                    2,
+                    9,
+                ),
+                (
+                    2,
+                    10,
+                ),
+                (
+                    2,
+                    11,
+                ),
+                (
+                    2,
+                    12,
+                ),
+                (
+                    2,
+                    13,
+                ),
+                (
+                    2,
+                    14,
+                ),
+                (
+                    2,
+                    15,
+                ),
+            ],
+            [
+                (
+                    3,
+                    0,
+                ),
+                (
+                    3,
+                    1,
+                ),
+                (
+                    3,
+                    2,
+                ),
+                (
+                    3,
+                    3,
+                ),
+                (
+                    3,
+                    4,
+                ),
+                (
+                    2,
+                    5,
+                ),
+                (
+                    3,
+                    6,
+                ),
+                (
+                    3,
+                    7,
+                ),
+                (
+                    3,
+                    8,
+                ),
+                (
+                    3,
+                    9,
+                ),
+                (
+                    3,
+                    10,
+                ),
+                (
+                    3,
+                    11,
+                ),
+                (
+                    3,
+                    12,
+                ),
+                (
+                    3,
+                    13,
+                ),
+                (
+                    3,
+                    14,
+                ),
+                (
+                    3,
+                    15,
+                ),
+            ],
+        ],
+        sizes: [
+            [
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+            ],
+            [
+                3,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+            ],
+            [
+                1,
+                1,
+                1,
+                2,
+                1,
+                3,
+                1,
+                1,
+                2,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+            ],
+            [
+                1,
+                1,
+                1,
+                2,
+                1,
+                1,
+                1,
+                2,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+            ],
+        ],
+    },
+    usable_rows: 0..10,
+}
