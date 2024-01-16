@@ -559,9 +559,9 @@ impl<F: Field + Ord> MockProver<F> {
             permutation,
             usable_rows: 0..usable_rows,
         };
-
+        println!("before synthesize in dev.rs");
         ConcreteCircuit::FloorPlanner::synthesize(&mut prover, circuit, config, constants)?;
-
+        println!("after synthesize in dev.rs");
         let (cs, selector_polys) = prover.cs.compress_selectors(prover.selectors.clone());
         prover.cs = cs;
         prover.fixed.extend(selector_polys.into_iter().map(|poly| {
