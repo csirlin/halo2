@@ -143,7 +143,7 @@ impl<F: Field> Chip<F> for FieldChip<F> {
 
 // ANCHOR: instructions-impl
 /// A variable representing a number.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct Number<F: Field>(AssignedCell<F, F>);
 
 impl<F: Field> NumericInstructions<F> for FieldChip<F> {
@@ -272,11 +272,13 @@ impl<F: Field> Circuit<F> for MyCircuit<F> {
         config: Self::Config,
         mut layouter: impl Layouter<F>,
     ) -> Result<(), Error> {
+        println!("In synthesize impl");
         let field_chip = FieldChip::<F>::construct(config);
 
         // Load our private values into the circuit.
         let a = field_chip.load_private(layouter.namespace(|| "load a"), self.a)?;
         let b = field_chip.load_private(layouter.namespace(|| "load b"), self.b)?;
+        
 
         // Load the constant factor into the circuit.
         let constant =
@@ -293,9 +295,18 @@ impl<F: Field> Circuit<F> for MyCircuit<F> {
         //     ab   = a*b
         //     absq = ab^2
         //     c    = constant*absq
+        
+        println!("a = {:#?}", a);
+        println!("b = {:#?}", b);
+        println!("constant = {:#?}", constant);
         let ab = field_chip.mul(layouter.namespace(|| "a * b"), a, b)?;
+        println!("ab = {:#?}", ab);
         let absq = field_chip.mul(layouter.namespace(|| "ab * ab"), ab.clone(), ab)?;
+        println!("absq = {:#?}", absq);
         let c = field_chip.mul(layouter.namespace(|| "constant * absq"), constant, absq)?;
+        println!("c = {:#?}", c);
+
+        
 
         // Expose the result as a public input to the circuit.
         field_chip.expose_public(layouter.namespace(|| "expose c"), c, 0)
@@ -312,9 +323,9 @@ fn main() {
     let k = 4;
 
     // Prepare the private and public inputs to the circuit!
-    let constant = Fp::from(7);
-    let a = Fp::from(2);
-    let b = Fp::from(3);
+    let constant = Fp::from(12);
+    let a = Fp::from(10);
+    let b = Fp::from(11);
     let c = constant * a.square() * b.square();
 
     // Instantiate the circuit with the private inputs.
