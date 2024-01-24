@@ -117,6 +117,36 @@ impl<F: Field> FieldChip<F> {
             vec![s_mul * (lhs * rhs - out)]
         });
 
+        // // Custom add gate for testing
+        // meta.create_gate("add", |meta| {
+        //     // To implement multiplication, we need three advice cells and a selector
+        //     // cell. We arrange them like so:
+        //     //
+        //     // | a0  | a1  | s_mul |
+        //     // |-----|-----|-------|
+        //     // | lhs | rhs | s_mul |
+        //     // | out |     |       |
+        //     //
+        //     // Gates may refer to any relative offsets we want, but each distinct
+        //     // offset adds a cost to the proof. The most common offsets are 0 (the
+        //     // current row), 1 (the next row), and -1 (the previous row), for which
+        //     // `Rotation` has specific constructors.
+        //     let lhs = meta.query_advice(advice[0], Rotation::cur());
+        //     let rhs = meta.query_advice(advice[1], Rotation::cur());
+        //     let out = meta.query_advice(advice[0], Rotation::next());
+        //     let s_mul = meta.query_selector(s_mul);
+
+        //     // Finally, we return the polynomial expressions that constrain this gate.
+        //     // For our multiplication gate, we only need a single polynomial constraint.
+        //     //
+        //     // The polynomial expressions returned from `create_gate` will be
+        //     // constrained by the proving system to equal zero. Our expression
+        //     // has the following properties:
+        //     // - When s_mul = 0, any value is allowed in lhs, rhs, and out.
+        //     // - When s_mul != 0, this constrains lhs * rhs = out.
+        //     vec![s_mul * (lhs.clone() - lhs)]
+        // });
+
         FieldConfig {
             advice,
             instance,
@@ -342,14 +372,60 @@ fn main() {
     // Given the correct public input, our circuit will verify.
     let prover = MockProver::run(k, &circuit, vec![public_inputs.clone()]).unwrap();
     assert_eq!(prover.verify(), Ok(()));
+    
+    // print_class(prover);
 
     // If we try some other public input, the proof will fail!
     public_inputs[0] += Fp::one();
     let prover = MockProver::run(k, &circuit, vec![public_inputs]).unwrap();
     assert!(prover.verify().is_err());
     // ANCHOR_END: test-circuit
+    
+    // CircuitLayout - check layout.png
+    use plotters::prelude::*;
+    let root = plotters::prelude::BitMapBackend::new("layout.png", (1024, 768)).into_drawing_area();
+    root.fill(&WHITE).unwrap();
+    let root = root
+        .titled("Example Circuit Layout", ("sans-serif", 60))
+        .unwrap();
 
-    print_class(prover)
+    halo2_proofs::dev::CircuitLayout::default()
+        // You can optionally render only a section of the circuit.
+        //.view_width(0..2)
+        //.view_height(0..16)
+        // You can hide labels, which can be useful with smaller areas.
+        .show_labels(true)
+        // Render the circuit onto your area!
+        // The first argument is the size parameter for the circuit.
+        .render(4, &circuit, &root)
+        .unwrap();
+
+    // Generate the DOT graph string.
+    let dot_string = halo2_proofs::dev::circuit_dot_graph(&circuit);
+
+    // Now you can either handle it in Rust, or just
+    // print it out to use with command-line tools.
+    print!("{}", dot_string);
+    build_graph(prover);
+
+}
+
+fn build_graph(prover: MockProver<Fp>) {
+    // start with instance values, which seem to be the public input(s) of the
+    // circuit and the desired result of the computation
+    for (i, col) in prover.instance.iter().enumerate() {
+        for (j, cell) in col.iter().enumerate() {
+            match cell {
+                halo2_proofs::dev::InstanceValue::Assigned(_) => 
+                    build_graph_from_instance(&prover, i, j),
+                _ => (),
+            }
+        }
+    }
+}
+
+fn build_graph_from_instance(prover: &MockProver<Fp>, col: usize, row: usize) {
+    println!("instance column {}, row {} is assigned", col, row);
 }
 
 fn print_class(prover: MockProver<Fp>) {
