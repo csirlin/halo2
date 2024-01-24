@@ -76,7 +76,7 @@ tempfile = ">=3, <3.7.0" # tempfile 3.7.0 has MSRV 1.63
 getrandom = { version = "0.2", features = ["js"] }
 
 [features]
-default = ["batch", "multicore"]
+default = ["batch", "multicore", "dev-graph", "test-dev-graph"]
 multicore = ["maybe-rayon/threads"]
 dev-graph = ["plotters", "tabbycat"]
 test-dev-graph = [
