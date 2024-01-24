@@ -677,11 +677,8 @@ MockProver {
     ],
     instance: [ 
         [ // instance[0]
-            
-            // why does instance[0][0] = c(ab)^2 + 1? it should be equal to 
-            // advice[0][8] (see mappings/aux below)
             Assigned( 
-                0x0000000000000000000000000000000000000000000030f22ca8af5cacd84631,
+                0x0000000000000000000000000000000000000000000030f22ca8af5cacd84630,
             ),
             Padding,
             Padding,
