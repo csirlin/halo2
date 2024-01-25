@@ -230,11 +230,11 @@ impl<F: Field> AddInstructions<F> for AddChip<F> {
             },
         );
 
-        println!("a after: {:#?}", a.0);
-        println!("b after: {:#?}", b.0);
+        // println!("a after: {:#?}", a.0);
+        // println!("b after: {:#?}", b.0);
 
-        let num = ret.as_ref().unwrap();
-        println!("sum after: {:#?}", num.0);
+        // let num = ret.as_ref().unwrap();
+        //println!("sum after: {:#?}", num.0);
 
         ret
     }
@@ -536,6 +536,7 @@ fn main() {
     // Given the correct public input, our circuit will verify.
     let prover = MockProver::run(k, &circuit, vec![public_inputs.clone()]).unwrap();
     assert_eq!(prover.verify(), Ok(()));
+    println!("FULL PROVER: \n {:#?}", prover);
 
     // If we try some other public input, the proof will fail!
     public_inputs[0] += Fp::one();

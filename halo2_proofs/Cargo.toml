@@ -49,6 +49,7 @@ ff = "0.13"
 group = "0.13"
 pasta_curves = "0.5"
 rand_core = { version = "0.6", default-features = false }
+rand = "0.8"
 tracing = "0.1"
 blake2b_simd = "1"
 maybe-rayon = {version = "0.1.0", default-features = false}
