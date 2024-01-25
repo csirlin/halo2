@@ -271,6 +271,7 @@ impl<F: Field> Circuit<F> for MyCircuit<F> {
 
 // ANCHOR: dev-graph
 fn main() {
+    use halo2_proofs::dev::MockProver;
     // Prepare the circuit you want to render.
     // You don't need to include any witness variables.
     let a = Fp::random(OsRng);
@@ -280,6 +281,14 @@ fn main() {
         a: Value::unknown(),
         lookup_table,
     };
+    let k = 4;
+    let a1 = Fp::from(25);
+    let a2 = Fp::from(52);
+    let public_inputs = vec![a1];
+
+    let prover = MockProver::run(k, &circuit, vec![]).unwrap();
+    assert_eq!(prover.verify(), Ok(()));
+    println!("FULL PROVER: \n {:#?}", prover);
 
     // Create the area you want to draw on.
     // Use SVGBackend if you want to render to .svg instead.
