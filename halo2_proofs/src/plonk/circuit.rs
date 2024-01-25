@@ -23,8 +23,8 @@ pub trait ColumnType:
 /// A column with an index and type
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct Column<C: ColumnType> {
-    index: usize,
-    column_type: C,
+    pub(crate) index: usize,
+    pub(crate) column_type: C,
 }
 
 impl<C: ColumnType> Column<C> {

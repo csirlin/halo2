@@ -4,7 +4,7 @@ use group::ff::Field;
 use halo2_proofs::{
     circuit::{AssignedCell, Chip, Layouter, Region, SimpleFloorPlanner, Value},
     plonk::{Advice, Circuit, Column, ConstraintSystem, Error, Fixed, Instance, Selector},
-    poly::Rotation, dev::MockProver,
+    poly::Rotation, dev::{MockProver, PrintGraph},
 };
 use pasta_curves::Fp;
 
@@ -406,27 +406,14 @@ fn main() {
     // Now you can either handle it in Rust, or just
     // print it out to use with command-line tools.
     print!("{}", dot_string);
-    build_graph(prover);
-
+    prover.build_graph();
 }
 
-fn build_graph(prover: MockProver<Fp>) {
-    // start with instance values, which seem to be the public input(s) of the
-    // circuit and the desired result of the computation
-    for (i, col) in prover.instance.iter().enumerate() {
-        for (j, cell) in col.iter().enumerate() {
-            match cell {
-                halo2_proofs::dev::InstanceValue::Assigned(_) => 
-                    build_graph_from_instance(&prover, i, j),
-                _ => (),
-            }
-        }
-    }
-}
 
-fn build_graph_from_instance(prover: &MockProver<Fp>, col: usize, row: usize) {
-    println!("instance column {}, row {} is assigned", col, row);
-}
+
+
+
+
 
 fn print_class(prover: MockProver<Fp>) {
     println!("FULL PROVER: \n {:#?}", prover);
