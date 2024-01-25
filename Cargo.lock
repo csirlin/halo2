@@ -889,6 +889,7 @@ dependencies = [
  "pasta_curves",
  "plotters",
  "proptest",
+ "rand",
  "rand_core",
  "tabbycat",
  "tempfile",
