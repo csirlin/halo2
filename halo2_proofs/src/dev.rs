@@ -12,7 +12,7 @@ use crate::{
     circuit,
     plonk::{
         permutation, Advice, Any, Assignment, Circuit, Column, ConstraintSystem, Error, Expression,
-        Fixed, FloorPlanner, Instance, Selector,
+        Fixed, FloorPlanner, Instance, Selector, circuit::Gate
     },
 };
 
@@ -299,6 +299,105 @@ pub struct MockProver<F: Field> {
 
     /// A range of available rows for assignment and copies.
     pub usable_rows: Range<usize>,
+}
+
+/// used to construct a graph from the MockProver object
+pub trait PrintGraph<F: Field> {
+
+    /// constructs the full graph, this is the entry point to all this work and
+    /// not very well-defined yet
+    fn build_graph(&self);
+
+    /// constructs the full graph that grows from a single instance cell. for 
+    /// circuits with just one instance assignment, this is the only thing 
+    /// build_graph will return
+    fn build_graph_from_instance(&self, col: usize, row: usize);
+
+    /// given a cell of the form (col, row) where col index is its position in 
+    /// MockProver.permutation.columns and row is the absolute row of the cell,
+    /// return a Vec of (col, row) pairs of all cells constrained equal to the
+    /// input. return[0] is the original input pair, return[1...n] are the rest
+    fn get_cells_in_group(&self, col: usize, row: usize) -> Vec<(usize, usize)>;
+
+    /// given a cell of the form (col, row) using MockProver.permutation.columns
+    /// return all the gate instances that contain the cell. each entry is of
+    /// the form (gate_index, offset) where the gate is self.cs.gates[gate_index]
+    /// and the offset represents what absolute row a rotation 0 virtual cell 
+    /// would be
+    fn get_gates(&self, col: usize, row: usize) -> Vec<(usize, i32)>;
+    
+    
+    
+}
+
+impl<F: Field> PrintGraph<F> for MockProver<F> {
+    
+
+    fn build_graph(&self) {    
+        // start with instance values, which seem to be the public input(s) of the
+        // circuit and the desired result of the computation
+        for (i, col) in self.instance.iter().enumerate() {
+            for (j, cell) in col.iter().enumerate() {
+                let mut perm_col = 0;
+                match cell {
+                    InstanceValue::Assigned(_) => {    
+                        for (pi, pcol) in self.permutation.columns.iter().enumerate() {
+                            if pcol.index == 0 && pcol.column_type == Any::Instance {
+                                perm_col = pi;
+                                break;
+                            }
+                        }
+                        self.build_graph_from_instance(perm_col, j)
+                    }
+                    _ => (),
+                }
+            }
+        }
+    }
+    
+    fn build_graph_from_instance(&self, col: usize, row: usize) {
+        println!("instance column {}, row {} is assigned", col, row);
+        let cells = self.get_cells_in_group(col, row);
+        println!("this cell is associated with cells {:#?}", cells);
+        for i in 1..cells.len() {
+            println!("cell {} is associated with gates {:#?} where each entry is (gate #, offset)", i, self.get_gates(cells[i].0, cells[i].1));
+        }
+    }
+
+    // returns the (c, r) cell pairs in the equality set containing cell (col, row)
+    fn get_cells_in_group(&self, col: usize, row: usize) -> Vec<(usize, usize)> {
+        let mut c = col;
+        let mut r = row;
+        let mut vect = vec![(col, row)];
+        (c, r) = self.permutation.mapping[c][r];
+        
+        while (c, r) != (col, row) {
+            vect.push((c, r));
+            (c, r) = self.permutation.mapping[c][r];
+        }
+        
+        return vect;
+    }
+
+    // get all gates that might include the cell at (col, row)
+    // return is of the form (gate #, row offset)
+    fn get_gates(&self, col: usize, row: usize) -> Vec<(usize, i32)> {
+        
+        let labelled_col = self.permutation.columns[col];
+        let mut gate_instances: Vec<(usize, i32)> = vec![];
+
+        for (i, g) in self.cs.gates.iter().enumerate() {
+            for vc in g.queried_cells().iter() {
+                if vc.column == labelled_col {
+                    gate_instances.push((i, (row as i32) - vc.rotation.0));
+                }
+            }
+        }
+
+        return gate_instances
+    }
+
+
 }
 
 ///
