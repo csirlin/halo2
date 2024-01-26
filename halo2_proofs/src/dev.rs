@@ -268,7 +268,32 @@ impl<F: Field> Mul<F> for Value<F> {
 ///         current_k,
 ///     } if current_k == 2,
 /// ));
-/// ```
+/// ``` 
+
+#[derive(Debug)]
+pub enum Cell {
+    /// (col, row) for an instance cell
+    Fixed(usize, usize),
+    /// (col, row) for an advice cell
+    Advice(usize, usize),
+    /// (col, row) for a fixed cell
+    Instance(usize, usize)
+}
+
+///
+#[derive(Debug)]
+pub enum CellSet</*F*/> {
+    /// Instance cell with row and col
+    Instance(usize, usize),
+
+    /// List of cells assigned to be equal
+    Equality(Vec<Cell>),
+
+    /// List of cells that are part of an expression
+    Expr(Vec<Cell>/*, Expression<F>*/) 
+}
+
+///
 #[derive(Debug)]
 pub struct MockProver<F: Field> {
     ///k
@@ -299,6 +324,19 @@ pub struct MockProver<F: Field> {
 
     /// A range of available rows for assignment and copies.
     pub usable_rows: Range<usize>,
+
+    ///
+    pub visited_instance: Vec<Vec<bool>>,
+
+    ///
+    pub visited_fixed: Vec<Vec<bool>>,
+
+    ///
+    pub visited_advice: Vec<Vec<bool>>,
+
+    ///
+    pub cellsets: Vec<CellSet>
+
 }
 
 /// used to construct a graph from the MockProver object
@@ -306,98 +344,194 @@ pub trait PrintGraph<F: Field> {
 
     /// constructs the full graph, this is the entry point to all this work and
     /// not very well-defined yet
-    fn build_graph(&self);
+    fn build_graph(&mut self);
+    
+    /// DFS from cell. visits cells constrained by equalities and cells that
+    /// share gates with the current cell
+    fn dfs(&self, cell: Cell);
 
+    /// given a Cell enum, return a Vec of Cell enums representing all the cells
+    /// constrained to be equal to the input. return[0] is the original input 
+    /// Cell, return[1...n] are the new ones, if any. If the cell isn't in
+    /// permutations, will also return just the input
+    fn get_cells_in_group(&self, cell: Cell) -> Vec<Cell>;
+    
+    /// given a Cell enum, return a Vec of all the gate instances that contain 
+    /// the cell. each entry is of the form (gate_index, offset) where the gate 
+    /// is self.cs.gates[gate_index] and the offset represents what absolute row
+    /// a rotation 0 virtual cell would correspond to.
+    /// TODO: filter unused (selector 0) gates out from this list
+    fn get_gate_instances(&self, cell: Cell) -> Vec<(usize, i32)>;
+
+    /// given a Vec of gate instance of the form (gate_index, offset), return 
+    /// all the cells found in those gates.
+    fn get_cells_in_gates(&self, gates: Vec<(usize, i32)>) -> Vec<Cell>;
+
+    /// look in self.permutation.columns for a Column with index equal to cell's
+    /// column, and type equal to cell's type. Return the index of this Column
+    /// if it exists, otherwise return -1
+    fn get_perm_col(&self, cell: Cell) -> i32;
+
+    /// === NOT IN USE === ///
+    
     /// constructs the full graph that grows from a single instance cell. for 
     /// circuits with just one instance assignment, this is the only thing 
     /// build_graph will return
     fn build_graph_from_instance(&self, col: usize, row: usize);
-
-    /// given a cell of the form (col, row) where col index is its position in 
-    /// MockProver.permutation.columns and row is the absolute row of the cell,
-    /// return a Vec of (col, row) pairs of all cells constrained equal to the
-    /// input. return[0] is the original input pair, return[1...n] are the rest
-    fn get_cells_in_group(&self, col: usize, row: usize) -> Vec<(usize, usize)>;
-
-    /// given a cell of the form (col, row) using MockProver.permutation.columns
-    /// return all the gate instances that contain the cell. each entry is of
-    /// the form (gate_index, offset) where the gate is self.cs.gates[gate_index]
-    /// and the offset represents what absolute row a rotation 0 virtual cell 
-    /// would be
-    fn get_gates(&self, col: usize, row: usize) -> Vec<(usize, i32)>;
-    
-    
-    
 }
 
 impl<F: Field> PrintGraph<F> for MockProver<F> {
     
 
-    fn build_graph(&self) {    
-        // start with instance values, which seem to be the public input(s) of the
-        // circuit and the desired result of the computation
+    fn build_graph(&mut self) {    
+        
+        // iterate through all instance cells as the start of DFS, because
+        // they which seem to be the public input(s) of the circuit and the
+        // desired result of the computation
         for (i, col) in self.instance.iter().enumerate() {
             for (j, cell) in col.iter().enumerate() {
-                let mut perm_col = 0;
+                
+                // if the instance cell is assigned, add it to self.cellsets
+                // and start a DFS. otherwise do nothing
                 match cell {
-                    InstanceValue::Assigned(_) => {    
-                        for (pi, pcol) in self.permutation.columns.iter().enumerate() {
-                            if pcol.index == 0 && pcol.column_type == Any::Instance {
-                                perm_col = pi;
-                                break;
-                            }
-                        }
-                        self.build_graph_from_instance(perm_col, j)
+                    InstanceValue::Assigned(_) => {
+                        self.cellsets.push(CellSet::Instance(i, j));   
+                        self.dfs(Cell::Instance(i, j));
                     }
                     _ => (),
                 }
             }
         }
     }
-    
-    fn build_graph_from_instance(&self, col: usize, row: usize) {
-        println!("instance column {}, row {} is assigned", col, row);
-        let cells = self.get_cells_in_group(col, row);
-        println!("this cell is associated with cells {:#?}", cells);
-        for i in 1..cells.len() {
-            println!("cell {} is associated with gates {:#?} where each entry is (gate #, offset)", i, self.get_gates(cells[i].0, cells[i].1));
+
+    fn dfs(&self, cell: Cell) {
+        
+        // check if cell has been visited
+        match cell {
+            Cell::Advice(c, r) => {
+                if self.visited_advice[c][r] { return }
+            },
+            Cell::Fixed(c, r) => {
+                if self.visited_fixed[c][r] { return }
+            }
+            Cell::Instance(c, r) => {
+                if self.visited_instance[c][r] { return }
+            }
         }
+
+        // look for equalities
+        let equalities = self.get_cells_in_group(cell);
+        let gate_members = self.get_cells_in_gates(cell);
+    }
+     
+    fn get_cells_in_group(&self, cell: Cell) -> Vec<Cell> {
+
+        let mut cells = vec![cell];
+
+        // find if Cell::Type(col, row) maps to anything in self.permutation.columns
+        let perm_row = match cell {
+            Cell::Advice(_, r) => r,
+            Cell::Fixed(_, r) => r,
+            Cell::Instance(_, r) => r
+        };
+        let perm_col = self.get_perm_col(cell);
+        if perm_col == -1 {
+            return cells;
+        }
+        let perm_col = perm_col as usize;
+        let mut cur_col = perm_col;
+        let mut cur_row = perm_row;
+        (cur_col, cur_row) = self.permutation.mapping[cur_col][cur_row];
+        
+        while (cur_col, cur_row) != (perm_col, perm_row) {
+            let Column {index: c_ind, column_type: c_type} = self.permutation.columns[cur_col];
+            let next_cell = match c_type {
+                Any::Fixed => Cell::Fixed(c_ind, cur_row),
+                Any::Advice => Cell::Advice(c_ind, cur_row),
+                Any::Instance => Cell::Instance(c_ind, cur_row)
+            };
+            cells.push(next_cell);
+            (cur_col, cur_row) = self.permutation.mapping[cur_col][cur_row];
+        }
+        
+        return cells;
     }
 
-    // returns the (c, r) cell pairs in the equality set containing cell (col, row)
-    fn get_cells_in_group(&self, col: usize, row: usize) -> Vec<(usize, usize)> {
-        let mut c = col;
-        let mut r = row;
-        let mut vect = vec![(col, row)];
-        (c, r) = self.permutation.mapping[c][r];
-        
-        while (c, r) != (col, row) {
-            vect.push((c, r));
-            (c, r) = self.permutation.mapping[c][r];
-        }
-        
-        return vect;
-    }
-
-    // get all gates that might include the cell at (col, row)
-    // return is of the form (gate #, row offset)
-    fn get_gates(&self, col: usize, row: usize) -> Vec<(usize, i32)> {
-        
-        let labelled_col = self.permutation.columns[col];
+    fn get_gate_instances(&self, cell: Cell) -> Vec<(usize, i32)> {
+        let (col_obj, row) = match cell {
+            Cell::Advice(c, r) => { (Column {index: c, column_type: Any::Advice}, r) },
+            Cell::Fixed(c, r) => { (Column {index: c, column_type: Any::Fixed}, r) },
+            Cell::Instance(c, r) => { (Column {index: c, column_type: Any::Instance}, r) } 
+        };   
         let mut gate_instances: Vec<(usize, i32)> = vec![];
-
+        
         for (i, g) in self.cs.gates.iter().enumerate() {
             for vc in g.queried_cells().iter() {
-                if vc.column == labelled_col {
+                if vc.column == col_obj {
                     gate_instances.push((i, (row as i32) - vc.rotation.0));
                 }
             }
         }
-
+        
         return gate_instances
     }
 
+    fn get_cells_in_gates(&self, gates: Vec<(usize, i32)>) -> Vec<Cell> {
+        
+    }
+    
+    fn get_perm_col(&self, cell: Cell) -> i32 {
+        
+        for (pi, pcol) in self.permutation.columns.iter().enumerate() {
+            match cell {
+                Cell::Advice(c, _) => {
+                    if pcol.column_type == Any::Advice && pcol.index == c {
+                        return pi as i32;
+                    }
+                }
+                Cell::Fixed(c, _) => {
+                    if pcol.column_type == Any::Fixed && pcol.index == c {
+                        return pi as i32;
+                    }
+                }
+                Cell::Instance(c, _) => {
+                    if pcol.column_type == Any::Instance && pcol.index == c {
+                        return pi as i32;
+                    }
+                }
+            }
+        }
+        return -1;
+    }
 
+    // // get all gates that might include the cell at (col, row)
+    // // return is of the form (gate #, row offset)
+    // fn get_gates(&self, col: usize, row: usize) -> Vec<(usize, i32)> {
+        
+    //     let labelled_col = self.permutation.columns[col];
+    //     let mut gate_instances: Vec<(usize, i32)> = vec![];
+        
+    //     for (i, g) in self.cs.gates.iter().enumerate() {
+    //         for vc in g.queried_cells().iter() {
+    //             if vc.column == labelled_col {
+    //                 gate_instances.push((i, (row as i32) - vc.rotation.0));
+    //             }
+    //         }
+    //     }
+        
+    //     return gate_instances
+    // }
+    
+    fn build_graph_from_instance(&self, col: usize, row: usize) {
+    // println!("instance column {}, row {} is assigned", col, row);
+        // let cells = self.get_cells_in_group(col, row);
+        // println!("this cell is associated with cells {:#?}", cells);
+        // for i in 1..cells.len() {
+        //     println!("cell {} is associated with gates {:#?} where each entry is (gate #, offset)", i, self.get_gates(cells[i].0, cells[i].1));
+        // }
+    }
+    
+    
 }
 
 ///
@@ -644,6 +778,10 @@ impl<F: Field + Ord> MockProver<F> {
         ];
         let permutation = permutation::keygen::Assembly::new(n, &cs.permutation);
         let constants = cs.constants.clone();
+        
+        let visited_advice = vec![vec![false; n]; advice.len()];
+        let visited_fixed = vec![vec![false; n]; fixed.len()];
+        let visited_instance = vec![vec![false; n]; instance.len()];
 
         let mut prover = MockProver {
             k,
@@ -657,6 +795,10 @@ impl<F: Field + Ord> MockProver<F> {
             selectors,
             permutation,
             usable_rows: 0..usable_rows,
+            visited_advice: visited_advice,
+            visited_fixed: visited_fixed,
+            visited_instance: visited_instance,
+            cellsets: vec![]
         };
         println!("before synthesize in dev.rs");
         ConcreteCircuit::FloorPlanner::synthesize(&mut prover, circuit, config, constants)?;
