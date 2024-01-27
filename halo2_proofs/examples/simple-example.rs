@@ -407,6 +407,7 @@ fn main() {
     // print it out to use with command-line tools.
     print!("{}", dot_string);
     prover.build_graph();
+    prover.print_cellsets();
 }
 
 
