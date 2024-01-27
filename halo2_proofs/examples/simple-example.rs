@@ -377,7 +377,7 @@ fn main() {
 
     // If we try some other public input, the proof will fail!
     public_inputs[0] += Fp::one();
-    let prover = MockProver::run(k, &circuit, vec![public_inputs]).unwrap();
+    let mut prover = MockProver::run(k, &circuit, vec![public_inputs]).unwrap();
     assert!(prover.verify().is_err());
     // ANCHOR_END: test-circuit
     

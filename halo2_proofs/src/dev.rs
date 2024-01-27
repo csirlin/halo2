@@ -1,5 +1,7 @@
 //! Tools for developing circuits.
 
+use std::cmp::max;
+use std::cmp::min;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::iter;
@@ -8,6 +10,8 @@ use std::ops::{Add, Mul, Neg, Range};
 use ff::Field;
 
 use crate::plonk::Assigned;
+use crate::plonk::VirtualCell;
+use crate::poly::Rotation;
 use crate::{
     circuit,
     plonk::{
@@ -270,7 +274,7 @@ impl<F: Field> Mul<F> for Value<F> {
 /// ));
 /// ``` 
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub enum Cell {
     /// (col, row) for an instance cell
     Fixed(usize, usize),
@@ -348,7 +352,7 @@ pub trait PrintGraph<F: Field> {
     
     /// DFS from cell. visits cells constrained by equalities and cells that
     /// share gates with the current cell
-    fn dfs(&self, cell: Cell);
+    fn dfs(&mut self, cell: Cell);
 
     /// given a Cell enum, return a Vec of Cell enums representing all the cells
     /// constrained to be equal to the input. return[0] is the original input 
@@ -365,7 +369,7 @@ pub trait PrintGraph<F: Field> {
 
     /// given a Vec of gate instance of the form (gate_index, offset), return 
     /// all the cells found in those gates.
-    fn get_cells_in_gates(&self, gates: Vec<(usize, i32)>) -> Vec<Cell>;
+    fn get_cells_in_gate(&self, gate_ind: usize, offset: i32) -> Vec<Cell>;
 
     /// look in self.permutation.columns for a Column with index equal to cell's
     /// column, and type equal to cell's type. Return the index of this Column
@@ -388,45 +392,67 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
         // iterate through all instance cells as the start of DFS, because
         // they which seem to be the public input(s) of the circuit and the
         // desired result of the computation
-        for (i, col) in self.instance.iter().enumerate() {
+        for (i, col) in self.instance.clone().iter().enumerate() {
             for (j, cell) in col.iter().enumerate() {
                 
                 // if the instance cell is assigned, add it to self.cellsets
                 // and start a DFS. otherwise do nothing
                 match cell {
                     InstanceValue::Assigned(_) => {
-                        self.cellsets.push(CellSet::Instance(i, j));   
-                        self.dfs(Cell::Instance(i, j));
+                        self.cellsets.push(CellSet::Instance(i, j));
+                        let icell = Cell::Instance(i, j);  
+                        self.dfs(icell);
                     }
                     _ => (),
                 }
             }
         }
+
+        println!("CELLSETS = {:#?}", self.cellsets);
     }
 
-    fn dfs(&self, cell: Cell) {
+    fn dfs(&mut self, cell: Cell) {
         
-        // check if cell has been visited
+        // check if cell has been visited, and if not, then mark it as visited
         match cell {
             Cell::Advice(c, r) => {
                 if self.visited_advice[c][r] { return }
+                self.visited_advice[c][r] = true;
             },
             Cell::Fixed(c, r) => {
                 if self.visited_fixed[c][r] { return }
+                self.visited_fixed[c][r] = true;
             }
             Cell::Instance(c, r) => {
                 if self.visited_instance[c][r] { return }
+                self.visited_instance[c][r] = true;
             }
         }
 
         // look for equalities
-        let equalities = self.get_cells_in_group(cell);
-        let gate_members = self.get_cells_in_gates(cell);
+        let equalities = self.get_cells_in_group(cell.clone());
+        self.cellsets.push(CellSet::Equality(equalities.clone()));
+
+        // look for expressions
+        let gates = self.get_gate_instances(cell.clone());
+        for (gate_ind, offset) in gates {
+            let gate_members = self.get_cells_in_gate(gate_ind, offset);
+            for gm in gate_members.iter() {
+                self.dfs(gm.clone());
+            }
+            self.cellsets.push(CellSet::Expr(gate_members));
+        }
+
+        for e in equalities.iter() {
+            self.dfs(e.clone());
+        }
+        
+
     }
      
     fn get_cells_in_group(&self, cell: Cell) -> Vec<Cell> {
 
-        let mut cells = vec![cell];
+        let mut cells = vec![cell.clone()];
 
         // find if Cell::Type(col, row) maps to anything in self.permutation.columns
         let perm_row = match cell {
@@ -465,19 +491,53 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
         };   
         let mut gate_instances: Vec<(usize, i32)> = vec![];
         
+        // loop over all gate types
         for (i, g) in self.cs.gates.iter().enumerate() {
+            
+            // find the minimum and maximum rotations from 0 among all queried gates
+            let mut max_rot = i32::MIN;
+            let mut min_rot = i32::MAX;
+            for vc in g.queried_cells().iter() {
+                let Rotation(r) = vc.rotation;
+                min_rot = min(min_rot, r);
+                max_rot = max(max_rot, r);
+            }
+
+            // if the gate queries the column that the cell is in, the gate can
+            // be included in gate_instances with an offset of row - rotation
+            // however, offset - min_rot >= 0 and offset + max_rot <= usable_rows
             for vc in g.queried_cells().iter() {
                 if vc.column == col_obj {
-                    gate_instances.push((i, (row as i32) - vc.rotation.0));
+                    let offset = (row as i32) - vc.rotation.0;
+                    if (self.usable_rows.start as i32 <= offset + min_rot && offset + max_rot < self.usable_rows.end as i32) {
+                        gate_instances.push((i, offset));
+                    }
                 }
             }
         }
         
-        return gate_instances
+        return gate_instances;
     }
 
-    fn get_cells_in_gates(&self, gates: Vec<(usize, i32)>) -> Vec<Cell> {
+    fn get_cells_in_gate(&self, gate_ind: usize, offset: i32) -> Vec<Cell> {
+
+        let mut cells = HashSet::new();
+        for VirtualCell{column: Column{index: vc_ind, column_type: c_type}, rotation: Rotation(r)} in self.cs.gates[gate_ind].queried_cells() {
+            match c_type {
+                Any::Advice => {
+                    cells.insert(Cell::Advice(*vc_ind, offset as usize + *r as usize));
+                }
+                Any::Fixed => {
+                    cells.insert(Cell::Fixed(*vc_ind, offset as usize + *r as usize));
+                }
+                Any::Instance => {
+                    cells.insert(Cell::Instance(*vc_ind, offset as usize + *r as usize));
+                }
+            }
+        }
         
+
+        return Vec::from_iter(cells);
     }
     
     fn get_perm_col(&self, cell: Cell) -> i32 {
