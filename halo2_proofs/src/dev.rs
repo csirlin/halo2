@@ -274,18 +274,20 @@ impl<F: Field> Mul<F> for Value<F> {
 /// ));
 /// ``` 
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, PartialOrd, Ord)]
 pub enum Cell {
-    /// (col, row) for an instance cell
-    Fixed(usize, usize),
     /// (col, row) for an advice cell
     Advice(usize, usize),
+
+    /// (col, row) for an instance cell
+    Fixed(usize, usize),
+    
     /// (col, row) for a fixed cell
     Instance(usize, usize)
 }
 
 ///
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, PartialOrd, Ord)]
 pub enum CellSet</*F*/> {
     /// Instance cell with row and col
     Instance(usize, usize),
@@ -339,7 +341,7 @@ pub struct MockProver<F: Field> {
     pub visited_advice: Vec<Vec<bool>>,
 
     ///
-    pub cellsets: Vec<CellSet>
+    pub cellsets: HashSet<CellSet>
 
 }
 
@@ -376,6 +378,9 @@ pub trait PrintGraph<F: Field> {
     /// if it exists, otherwise return -1
     fn get_perm_col(&self, cell: Cell) -> i32;
 
+    ///
+    fn print_cellsets(&self);
+
     /// === NOT IN USE === ///
     
     /// constructs the full graph that grows from a single instance cell. for 
@@ -386,6 +391,15 @@ pub trait PrintGraph<F: Field> {
 
 impl<F: Field> PrintGraph<F> for MockProver<F> {
     
+    fn print_cellsets(&self) {
+
+        let mut vect: Vec<CellSet> = Vec::new();
+        for elem in &self.cellsets {
+            vect.push(elem.clone());
+        }
+        vect.sort();
+        println!("SORTED CELLSET: \n {:#?}", vect);
+    }
 
     fn build_graph(&mut self) {    
         
@@ -399,7 +413,7 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
                 // and start a DFS. otherwise do nothing
                 match cell {
                     InstanceValue::Assigned(_) => {
-                        self.cellsets.push(CellSet::Instance(i, j));
+                        self.cellsets.insert(CellSet::Instance(i, j));
                         let icell = Cell::Instance(i, j);  
                         self.dfs(icell);
                     }
@@ -407,8 +421,6 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
                 }
             }
         }
-
-        println!("CELLSETS = {:#?}", self.cellsets);
     }
 
     fn dfs(&mut self, cell: Cell) {
@@ -431,7 +443,12 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
 
         // look for equalities
         let equalities = self.get_cells_in_group(cell.clone());
-        self.cellsets.push(CellSet::Equality(equalities.clone()));
+        let mut sorted_equalities = equalities.clone();
+        sorted_equalities.sort();
+        if (sorted_equalities.len() > 1) {
+            self.cellsets.insert(CellSet::Equality(sorted_equalities));
+        }
+        
 
         // look for expressions
         let gates = self.get_gate_instances(cell.clone());
@@ -440,7 +457,9 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
             for gm in gate_members.iter() {
                 self.dfs(gm.clone());
             }
-            self.cellsets.push(CellSet::Expr(gate_members));
+            let mut sorted_gms = gate_members.clone();
+            sorted_gms.sort();
+            self.cellsets.insert(CellSet::Expr(sorted_gms));
         }
 
         for e in equalities.iter() {
@@ -509,7 +528,7 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
             for vc in g.queried_cells().iter() {
                 if vc.column == col_obj {
                     let offset = (row as i32) - vc.rotation.0;
-                    if (self.usable_rows.start as i32 <= offset + min_rot && offset + max_rot < self.usable_rows.end as i32) {
+                    if self.usable_rows.start as i32 <= offset + min_rot && offset + max_rot < self.usable_rows.end as i32 {
                         gate_instances.push((i, offset));
                     }
                 }
@@ -858,7 +877,7 @@ impl<F: Field + Ord> MockProver<F> {
             visited_advice: visited_advice,
             visited_fixed: visited_fixed,
             visited_instance: visited_instance,
-            cellsets: vec![]
+            cellsets: HashSet::new()
         };
         println!("before synthesize in dev.rs");
         ConcreteCircuit::FloorPlanner::synthesize(&mut prover, circuit, config, constants)?;
