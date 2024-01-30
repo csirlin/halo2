@@ -408,6 +408,7 @@ fn main() {
     print!("{}", dot_string);
     prover.build_graph();
     prover.print_cellsets();
+    prover.print_trackers();
 }
 
 
