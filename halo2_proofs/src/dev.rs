@@ -299,6 +299,29 @@ pub enum CellSet</*F*/> {
     Expr(Vec<Cell>/*, Expression<F>*/) 
 }
 
+/// Low-degree expression representing an identity that must hold over the committed columns.
+#[derive(Clone)]
+pub enum AbsExpression<F> {
+    /// This is a constant polynomial
+    Constant(F),
+    /// This is a virtual selector (selector index in order of when it was added: usize, simple? : bool)
+    Selector(Selector),
+    /// This is a fixed column queried at a certain relative location
+    Fixed(usize, usize),
+    /// This is an advice (witness) column queried at a certain relative location
+    Advice(usize, usize),
+    /// This is an instance (external) column queried at a certain relative location
+    Instance(usize, usize),
+    /// This is a negated polynomial
+    Negated(Box<AbsExpression<F>>),
+    /// This is the sum of two polynomials
+    Sum(Box<AbsExpression<F>>, Box<AbsExpression<F>>),
+    /// This is the product of two polynomials
+    Product(Box<AbsExpression<F>>, Box<AbsExpression<F>>),
+    /// This is a scaled polynomial
+    Scaled(Box<AbsExpression<F>>, F),
+}
+
 ///
 #[derive(Debug)]
 pub struct MockProver<F: Field> {
@@ -389,6 +412,9 @@ pub trait PrintGraph<F: Field> {
     /// column, and type equal to cell's type. Return the index of this Column
     /// if it exists, otherwise return -1
     fn get_perm_col(&self, cell: Cell) -> i32;
+
+    ///
+    fn get_abs_expressions(&self, gate: &Gate<F>, offset: i32);
 
     /// print all the cellsets
     fn print_cellsets(&self);
@@ -576,6 +602,8 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
                 max_rot = max(max_rot, r);
             }
 
+            
+
             // if the gate queries the column that the cell is in, the gate can
             // be included in gate_instances with an offset of row - rotation
             // however, offset - min_rot >= 0 and offset + max_rot <= usable_rows
@@ -583,6 +611,9 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
                 if vc.column == col_obj {
                     let offset = (row as i32) - vc.rotation.0;
                     if self.usable_rows.start as i32 <= offset + min_rot && offset + max_rot < self.usable_rows.end as i32 {
+                        
+                        let abs_exprs = self.get_abs_expressions(gate, offset);
+                        
                         gate_instances.push((i, offset));
                     }
                 }
@@ -590,6 +621,10 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
         }
         
         return gate_instances;
+    }
+
+    fn get_abs_expressions(&self, gate: &Gate<F>, offset: i32) {
+        
     }
 
     fn get_cells_in_gate(&self, gate_ind: usize, offset: i32) -> Vec<Cell> {
