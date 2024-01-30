@@ -281,7 +281,7 @@ pub enum Cell {
 
     /// (col, row) for an instance cell
     Fixed(usize, usize),
-    
+
     /// (col, row) for a fixed cell
     Instance(usize, usize)
 }
@@ -341,7 +341,19 @@ pub struct MockProver<F: Field> {
     pub visited_advice: Vec<Vec<bool>>,
 
     ///
-    pub cellsets: HashSet<CellSet>
+    pub cellsets: HashSet<CellSet>,
+
+    ///
+    pub cellsets_vect: Vec<CellSet>,
+
+    ///
+    pub tracker_instance: Vec<Vec<Vec<usize>>>,
+
+    ///
+    pub tracker_fixed: Vec<Vec<Vec<usize>>>,
+
+    ///
+    pub tracker_advice: Vec<Vec<Vec<usize>>>,
 
 }
 
@@ -378,8 +390,11 @@ pub trait PrintGraph<F: Field> {
     /// if it exists, otherwise return -1
     fn get_perm_col(&self, cell: Cell) -> i32;
 
-    ///
+    /// print all the cellsets
     fn print_cellsets(&self);
+
+    /// print each tracking vector
+    fn print_trackers(&self);
 
     /// === NOT IN USE === ///
     
@@ -391,14 +406,17 @@ pub trait PrintGraph<F: Field> {
 
 impl<F: Field> PrintGraph<F> for MockProver<F> {
     
+    // print all the cellsets
     fn print_cellsets(&self) {
+        println!("SORTED CELLSET: \n {:#?}", self.cellsets_vect);
+    }
 
-        let mut vect: Vec<CellSet> = Vec::new();
-        for elem in &self.cellsets {
-            vect.push(elem.clone());
-        }
-        vect.sort();
-        println!("SORTED CELLSET: \n {:#?}", vect);
+    // print each tracking vector
+    fn print_trackers(&self) {
+        println!("TRACKERS: \n");
+        println!("Advice: {:#?}", self.tracker_advice);
+        println!("Fixed: {:#?}", self.tracker_fixed);
+        println!("Instance: {:#?}", self.tracker_instance);
     }
 
     fn build_graph(&mut self) {    
@@ -421,6 +439,42 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
                 }
             }
         }
+
+        // self.cellset_vect served its purpose by eliminating redundant elements
+        // now convert it to a vect so that it can be indexed
+        for elem in &self.cellsets {
+            self.cellsets_vect.push(elem.clone());
+        }
+        self.cellsets_vect.sort();
+
+        // record which cellsets each cell is a member of in the self.tracker_... member vars
+        for (i, cs) in self.cellsets_vect.iter().enumerate() {
+            match cs {
+                // if cellset i is an instance(c, r) then add i to tracker_instance[c][r]
+                CellSet::Instance(col, row) => {
+                    self.tracker_instance[*col][*row].push(i);
+                }
+                // otherwise cellset i is an equality(vect<type(c, r)>) or expr(vect<type(c, r)>)
+                // so add i to tracker_<type>[c][r] for all cells in cellset i
+                CellSet::Equality(v)
+                | CellSet::Expr(v) => {
+                    for c in v.iter() {
+                        match c {
+                            Cell::Advice(col, row) => {
+                                self.tracker_advice[*col][*row].push(i);
+                            },
+                            Cell::Fixed(col, row) => {
+                                self.tracker_fixed[*col][*row].push(i);
+                            }
+                            Cell::Instance(col, row) => {
+                                self.tracker_instance[*col][*row].push(i);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
     }
 
     fn dfs(&mut self, cell: Cell) {
@@ -445,7 +499,7 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
         let equalities = self.get_cells_in_group(cell.clone());
         let mut sorted_equalities = equalities.clone();
         sorted_equalities.sort();
-        if (sorted_equalities.len() > 1) {
+        if sorted_equalities.len() > 1 {
             self.cellsets.insert(CellSet::Equality(sorted_equalities));
         }
         
@@ -862,6 +916,10 @@ impl<F: Field + Ord> MockProver<F> {
         let visited_fixed = vec![vec![false; n]; fixed.len()];
         let visited_instance = vec![vec![false; n]; instance.len()];
 
+        let tracker_advice = vec![vec![vec![]; n]; advice.len()];
+        let tracker_fixed = vec![vec![vec![]; n]; fixed.len()];
+        let tracker_instance = vec![vec![vec![]; n]; instance.len()];
+
         let mut prover = MockProver {
             k,
             n: n as u32,
@@ -877,8 +935,13 @@ impl<F: Field + Ord> MockProver<F> {
             visited_advice: visited_advice,
             visited_fixed: visited_fixed,
             visited_instance: visited_instance,
-            cellsets: HashSet::new()
+            cellsets: HashSet::new(),
+            cellsets_vect: Vec::new(),
+            tracker_advice: tracker_advice,
+            tracker_fixed: tracker_fixed,
+            tracker_instance: tracker_instance
         };
+
         println!("before synthesize in dev.rs");
         ConcreteCircuit::FloorPlanner::synthesize(&mut prover, circuit, config, constants)?;
         println!("after synthesize in dev.rs");
