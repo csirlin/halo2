@@ -300,7 +300,8 @@ pub enum CellSet</*F*/> {
 }
 
 /// Low-degree expression representing an identity that must hold over the committed columns.
-#[derive(Clone)]
+// #[derive(Clone)]
+#[derive(Debug)]
 pub enum AbsExpression<F> {
     /// This is a constant polynomial
     Constant(F),
@@ -612,7 +613,7 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
                     let offset = (row as i32) - vc.rotation.0;
                     if self.usable_rows.start as i32 <= offset + min_rot && offset + max_rot < self.usable_rows.end as i32 {
                         
-                        let abs_exprs = self.get_abs_expressions(gate, offset);
+                        let abs_exprs = self.get_abs_expressions(g, offset);
                         
                         gate_instances.push((i, offset));
                     }
