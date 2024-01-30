@@ -89,12 +89,10 @@ MockProver {
                     ),
                 ],
 
-                // this is not explained, but maybe the index in the column and 
-                // the value of the selector? (don't think so)
                 queried_selectors: [ 
                     Selector(
-                        0,
-                        true,
+                        0, // the index of the selector
+                        true, // is it a simple selector?
                     ),
                 ],
 
