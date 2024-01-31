@@ -2,14 +2,19 @@
 
 use std::cmp::max;
 use std::cmp::min;
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::hash::Hasher;
 use std::iter;
 use std::ops::{Add, Mul, Neg, Range};
-
 use ff::Field;
+use std::hash::Hash;
 
+use crate::plonk::AdviceQuery;
 use crate::plonk::Assigned;
+use crate::plonk::FixedQuery;
+use crate::plonk::InstanceQuery;
 use crate::plonk::VirtualCell;
 use crate::poly::Rotation;
 use crate::{
@@ -287,8 +292,8 @@ pub enum Cell {
 }
 
 ///
-#[derive(Debug, PartialEq, Eq, Hash, Clone, PartialOrd, Ord)]
-pub enum CellSet</*F*/> {
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum CellSet<F: Field> {
     /// Instance cell with row and col
     Instance(usize, usize),
 
@@ -296,13 +301,75 @@ pub enum CellSet</*F*/> {
     Equality(Vec<Cell>),
 
     /// List of cells that are part of an expression
-    Expr(Vec<Cell>/*, Expression<F>*/) 
+    Expr(
+        Vec<Cell>, 
+        Vec<AbsExpression<F>>/*, Expression<F>*/
+    ) 
+}
+
+impl<F: Field> Hash for CellSet<F> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            CellSet::Instance(c, r) => {
+                state.write_u8(1);
+                c.hash(state);
+                r.hash(state);
+            }
+            CellSet::Equality(v, ) => {
+                state.write_u8(2);
+                v.hash(state);
+            }
+            CellSet::Expr(v, _) => {
+                state.write_u8(3);
+                v.hash(state);
+            }
+        }
+    }
+}
+
+impl<F: Field> Ord for CellSet<F> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match self {
+            CellSet::Instance(c, r) => {
+                match other {
+                    CellSet::Instance(co, ro) => {
+                        let vec_other = vec![co, ro];
+                        vec![c, r].cmp(&vec_other)
+                        // if c < co { Some(Ordering::Less) }
+                        // else if c > co { Some(Ordering::Greater) }
+                        // else if r < ro { Some(Ordering::Less) }
+                        // else if r > ro { Some(Ordering::Greater) }
+                        // Some(Ordering::Equal)
+                    },
+                    _ => Ordering::Less
+                }
+            },
+            CellSet::Equality(v) => {
+                match other {
+                    CellSet::Instance(_, _) => Ordering::Greater,
+                    CellSet::Equality(vo) => v.cmp(vo),
+                    CellSet::Expr(_, _) => Ordering::Less
+                }
+            },
+            CellSet::Expr(v, _) => {
+                match other {
+                    CellSet::Expr(vo, _) => v.cmp(vo),
+                    _ => Ordering::Greater,
+                }
+            }
+        }
+    }
+}
+
+impl<F: Field> PartialOrd for CellSet<F> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 /// Low-degree expression representing an identity that must hold over the committed columns.
-// #[derive(Clone)]
-#[derive(Debug)]
-pub enum AbsExpression<F> {
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AbsExpression<F: Field> {
     /// This is a constant polynomial
     Constant(F),
     /// This is a virtual selector (selector index in order of when it was added: usize, simple? : bool)
@@ -365,10 +432,10 @@ pub struct MockProver<F: Field> {
     pub visited_advice: Vec<Vec<bool>>,
 
     ///
-    pub cellsets: HashSet<CellSet>,
+    pub cellsets: HashSet<CellSet<F>>,
 
     ///
-    pub cellsets_vect: Vec<CellSet>,
+    pub cellsets_vect: Vec<CellSet<F>>,
 
     ///
     pub tracker_instance: Vec<Vec<Vec<usize>>>,
@@ -383,6 +450,8 @@ pub struct MockProver<F: Field> {
 
 /// used to construct a graph from the MockProver object
 pub trait PrintGraph<F: Field> {
+    ///
+    fn evaluate_equal(&self, match_expr: &AbsExpression<F>, match_value: F) -> bool;
 
     /// constructs the full graph, this is the entry point to all this work and
     /// not very well-defined yet
@@ -403,7 +472,7 @@ pub trait PrintGraph<F: Field> {
     /// is self.cs.gates[gate_index] and the offset represents what absolute row
     /// a rotation 0 virtual cell would correspond to.
     /// TODO: filter unused (selector 0) gates out from this list
-    fn get_gate_instances(&self, cell: Cell) -> Vec<(usize, i32)>;
+    fn get_gate_instances(&self, cell: Cell) -> Vec<(usize, i32, Vec<AbsExpression<F>>)>;
 
     /// given a Vec of gate instance of the form (gate_index, offset), return 
     /// all the cells found in those gates.
@@ -415,7 +484,10 @@ pub trait PrintGraph<F: Field> {
     fn get_perm_col(&self, cell: Cell) -> i32;
 
     ///
-    fn get_abs_expressions(&self, gate: &Gate<F>, offset: i32);
+    fn get_abs_expressions(&self, gate: &Gate<F>, offset: i32) -> Vec<AbsExpression<F>>;
+
+    ///
+    fn get_abs_expression(&self, expr: &Expression<F>, offset: i32) -> AbsExpression<F>;
 
     /// print all the cellsets
     fn print_cellsets(&self);
@@ -456,14 +528,19 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
                 
                 // if the instance cell is assigned, add it to self.cellsets
                 // and start a DFS. otherwise do nothing
-                match cell {
-                    InstanceValue::Assigned(_) => {
-                        self.cellsets.insert(CellSet::Instance(i, j));
-                        let icell = Cell::Instance(i, j);  
-                        self.dfs(icell);
-                    }
-                    _ => (),
+                if let InstanceValue::Assigned(_) = cell {
+                    self.cellsets.insert(CellSet::Instance(i, j));
+                    let icell = Cell::Instance(i, j);
+                    self.dfs(icell);
                 }
+                // match cell {
+                //     InstanceValue::Assigned(_) => {
+                //         self.cellsets.insert(CellSet::Instance(i, j));
+                //         let icell = Cell::Instance(i, j);  
+                //         self.dfs(icell);
+                //     }
+                //     _ => (),
+                // }
             }
         }
 
@@ -484,7 +561,7 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
                 // otherwise cellset i is an equality(vect<type(c, r)>) or expr(vect<type(c, r)>)
                 // so add i to tracker_<type>[c][r] for all cells in cellset i
                 CellSet::Equality(v)
-                | CellSet::Expr(v) => {
+                | CellSet::Expr(v, _) => {
                     for c in v.iter() {
                         match c {
                             Cell::Advice(col, row) => {
@@ -533,14 +610,14 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
 
         // look for expressions
         let gates = self.get_gate_instances(cell.clone());
-        for (gate_ind, offset) in gates {
+        for (gate_ind, offset, exprs) in gates {
             let gate_members = self.get_cells_in_gate(gate_ind, offset);
             for gm in gate_members.iter() {
                 self.dfs(gm.clone());
             }
             let mut sorted_gms = gate_members.clone();
             sorted_gms.sort();
-            self.cellsets.insert(CellSet::Expr(sorted_gms));
+            self.cellsets.insert(CellSet::Expr(sorted_gms, exprs));
         }
 
         for e in equalities.iter() {
@@ -580,16 +657,16 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
             (cur_col, cur_row) = self.permutation.mapping[cur_col][cur_row];
         }
         
-        return cells;
+        cells
     }
 
-    fn get_gate_instances(&self, cell: Cell) -> Vec<(usize, i32)> {
+    fn get_gate_instances(&self, cell: Cell) -> Vec<(usize, i32, Vec<AbsExpression<F>>)> {
         let (col_obj, row) = match cell {
             Cell::Advice(c, r) => { (Column {index: c, column_type: Any::Advice}, r) },
             Cell::Fixed(c, r) => { (Column {index: c, column_type: Any::Fixed}, r) },
             Cell::Instance(c, r) => { (Column {index: c, column_type: Any::Instance}, r) } 
         };   
-        let mut gate_instances: Vec<(usize, i32)> = vec![];
+        let mut gate_instances: Vec<(usize, i32, Vec<AbsExpression<F>>)> = vec![];
         
         // loop over all gate types
         for (i, g) in self.cs.gates.iter().enumerate() {
@@ -603,8 +680,6 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
                 max_rot = max(max_rot, r);
             }
 
-            
-
             // if the gate queries the column that the cell is in, the gate can
             // be included in gate_instances with an offset of row - rotation
             // however, offset - min_rot >= 0 and offset + max_rot <= usable_rows
@@ -614,18 +689,116 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
                     if self.usable_rows.start as i32 <= offset + min_rot && offset + max_rot < self.usable_rows.end as i32 {
                         
                         let abs_exprs = self.get_abs_expressions(g, offset);
-                        
-                        gate_instances.push((i, offset));
+                        if !abs_exprs.is_empty() {
+                            gate_instances.push((i, offset, abs_exprs));
+                        }
                     }
                 }
             }
         }
         
-        return gate_instances;
+        gate_instances
     }
 
-    fn get_abs_expressions(&self, gate: &Gate<F>, offset: i32) {
+    fn get_abs_expressions(&self, gate: &Gate<F>, offset: i32) -> Vec<AbsExpression<F>> {
         
+        let mut abs_exprs = vec![];
+        for expr in gate.polynomials() {
+            let abs_expr = self.get_abs_expression(expr, offset);
+            if !self.evaluate_equal(&abs_expr, F::ZERO) {
+                abs_exprs.push(abs_expr);
+            }
+        }
+        
+        abs_exprs
+    }
+
+    fn get_abs_expression(&self, expr: &Expression<F>, offset: i32) -> AbsExpression<F> {
+        match expr {
+            Expression::Constant(f) => {
+                AbsExpression::Constant(*f)
+            }
+            Expression::Selector(s) => {
+                AbsExpression::Selector(*s)
+            }
+            Expression::Fixed(FixedQuery {index: _, column_index, rotation} ) => {
+                AbsExpression::Fixed(*column_index, offset as usize + rotation.0 as usize)
+            }
+            Expression::Advice(AdviceQuery {index: _, column_index, rotation}) => {
+                AbsExpression::Advice(*column_index, offset as usize + rotation.0 as usize)
+            }
+            Expression::Instance(InstanceQuery {index: _, column_index, rotation}) => {
+                AbsExpression::Instance(*column_index, offset as usize + rotation.0 as usize)
+            }
+            Expression::Negated(boxed_expr) => {
+                let abs_expr = self.get_abs_expression(&**boxed_expr, offset);
+                AbsExpression::Negated(Box::new(abs_expr))
+            }
+            Expression::Sum(boxed1, boxed2) => {
+                let abs_expr_1 = self.get_abs_expression(&**boxed1, offset);
+                let abs_expr_2 = self.get_abs_expression(&**boxed2, offset);
+                
+                // sum(0, x) = x
+                if self.evaluate_equal(&abs_expr_1, F::ZERO) {
+                    return abs_expr_2
+                }
+
+                // sum(x, 0) = x
+                if self.evaluate_equal(&abs_expr_2, F::ZERO) {
+                    return abs_expr_1
+                }
+
+                AbsExpression::Sum(Box::new(abs_expr_1), Box::new(abs_expr_2))
+            }
+            Expression::Product(boxed1, boxed2) => {
+                let abs_expr_1 = self.get_abs_expression(&**boxed1, offset);
+                let abs_expr_2 = self.get_abs_expression(&**boxed2, offset);
+
+                // product(0, x) = 0
+                if self.evaluate_equal(&abs_expr_1, F::ZERO) {
+                    return abs_expr_1
+                }
+
+                // product(x, 0) = 0
+                if self.evaluate_equal(&abs_expr_2, F::ZERO) {
+                    return abs_expr_2
+                }
+
+                // product(1, x) = x
+                if self.evaluate_equal(&abs_expr_1, F::ONE) {
+                    return abs_expr_2
+                }
+
+                // product(x, 1) = x
+                if self.evaluate_equal(&abs_expr_2, F::ONE) {
+                    return abs_expr_1
+                }
+
+                AbsExpression::Product(Box::new(abs_expr_1), Box::new(abs_expr_2))
+            }
+            Expression::Scaled(boxed_expr, scale) => {
+                AbsExpression::Scaled(Box::new(self.get_abs_expression(boxed_expr, offset)), *scale)
+            }
+
+        }
+    }
+
+    fn evaluate_equal(&self, match_expr: &AbsExpression<F>, match_value: F) -> bool {
+        match match_expr {
+            AbsExpression::Constant(c) => {
+                *c == match_value
+            } 
+            AbsExpression::Advice(c, r) => {
+                self.advice[*c][*r] == CellValue::Assigned(match_value)
+            }
+            AbsExpression::Fixed(c, r) => {
+                self.fixed[*c][*r] == CellValue::Assigned(match_value) 
+            }
+            AbsExpression::Instance(c, r) => {
+                self.instance[*c][*r] == InstanceValue::Assigned(match_value)
+            }
+            _ => false
+        }
     }
 
     fn get_cells_in_gate(&self, gate_ind: usize, offset: i32) -> Vec<Cell> {
@@ -645,8 +818,7 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
             }
         }
         
-
-        return Vec::from_iter(cells);
+        Vec::from_iter(cells)
     }
     
     fn get_perm_col(&self, cell: Cell) -> i32 {
@@ -670,7 +842,7 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
                 }
             }
         }
-        return -1;
+        -1
     }
 
     // // get all gates that might include the cell at (col, row)
@@ -691,7 +863,7 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
     //     return gate_instances
     // }
     
-    fn build_graph_from_instance(&self, col: usize, row: usize) {
+    fn build_graph_from_instance(&self, _col: usize, _row: usize) {
     // println!("instance column {}, row {} is assigned", col, row);
         // let cells = self.get_cells_in_group(col, row);
         // println!("this cell is associated with cells {:#?}", cells);
@@ -968,14 +1140,14 @@ impl<F: Field + Ord> MockProver<F> {
             selectors,
             permutation,
             usable_rows: 0..usable_rows,
-            visited_advice: visited_advice,
-            visited_fixed: visited_fixed,
-            visited_instance: visited_instance,
+            visited_advice,
+            visited_fixed,
+            visited_instance,
             cellsets: HashSet::new(),
             cellsets_vect: Vec::new(),
-            tracker_advice: tracker_advice,
-            tracker_fixed: tracker_fixed,
-            tracker_instance: tracker_instance
+            tracker_advice,
+            tracker_fixed,
+            tracker_instance,
         };
 
         println!("before synthesize in dev.rs");
