@@ -252,7 +252,7 @@ impl TryFrom<Column<Any>> for Column<Instance> {
 ///     Ok(())
 /// }
 /// ```
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Selector(pub(crate) usize, bool);
 
 impl Selector {
