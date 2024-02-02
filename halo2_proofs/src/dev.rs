@@ -5,6 +5,8 @@ use std::cmp::min;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::collections::VecDeque;
+use std::fmt;
 use std::hash::Hasher;
 use std::iter;
 use std::ops::{Add, Mul, Neg, Range};
@@ -279,7 +281,7 @@ impl<F: Field> Mul<F> for Value<F> {
 /// ));
 /// ``` 
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone, PartialOrd, Ord)]
+#[derive(PartialEq, Eq, Hash, Clone, PartialOrd, Ord)]
 pub enum Cell {
     /// (col, row) for an advice cell
     Advice(usize, usize),
@@ -291,8 +293,18 @@ pub enum Cell {
     Instance(usize, usize)
 }
 
+impl fmt::Debug for Cell {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Advice(arg0, arg1) => write!(f, "A{}.{}", arg0, arg1),
+            Self::Fixed(arg0, arg1) => write!(f, "F{}.{}", arg0, arg1),
+            Self::Instance(arg0, arg1) => write!(f, "I{}.{}", arg0, arg1),
+        }
+    }
+}
+
 ///
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(PartialEq, Eq, Clone)]
 pub enum CellSet<F: Field> {
     /// Instance cell with row and col
     Instance(usize, usize),
@@ -305,6 +317,20 @@ pub enum CellSet<F: Field> {
         Vec<Cell>, 
         Vec<AbsExpression<F>>/*, Expression<F>*/
     ) 
+}
+
+impl<F: Field> fmt::Debug for CellSet<F> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Instance(arg0, arg1) => write!(f, "Inst( I[{}][{}] )", arg0, arg1),
+            Self::Equality(v) => {
+                write!(f, "Eq( {:?} )", v)
+            }
+            Self::Expr(v, _) => {
+                write!(f, "Expr( {:?} )", v)
+            }
+        }
+    }
 }
 
 impl<F: Field> Hash for CellSet<F> {
@@ -578,6 +604,108 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
                 }
             }
         }
+
+        // make dependency graph
+        let mut queue: VecDeque<usize> = VecDeque::new();
+        //let visited_cells: HashMap<Cell, bool> = HashMap::new();
+
+        // not present: you can queue it and give it an edge
+        // present, false: in queue; you can't queue it but you can give it an edge
+        // present, true: already processed; you can't queue it or give it an edge
+        let mut visited_cellsets: HashMap<usize, bool> = HashMap::new();
+
+        // push back instance cellsets to the queue
+        for i in 0..self.cellsets_vect.len() {
+            if let CellSet::Instance(_, _) = self.cellsets_vect[i] {
+                queue.push_back(i);
+                visited_cellsets.insert(i, false);
+            }
+        }
+
+        println!("Queue after inserting instance vars = {:#?}", queue);
+
+        let mut edges: Vec<Vec<usize>> = vec![vec![]; self.cellsets_vect.len()];
+
+        // iterate
+        while !queue.is_empty() {
+            let front = queue.pop_front().unwrap();
+            println!("Front = {}", front);
+            *visited_cellsets.get_mut(&front).unwrap() = true;
+            match &self.cellsets_vect[front] {
+                CellSet::Instance(col, row) => {
+                    //this shouldn't happen, but i guess just point to it and add it to the queue
+                    for common_cellset in &self.tracker_instance[*col][*row] {
+                        if !visited_cellsets.contains_key(&common_cellset) || !visited_cellsets[&common_cellset] {
+                            if !visited_cellsets.contains_key(&common_cellset) {
+                                queue.push_back(*common_cellset);
+                                visited_cellsets.insert(*common_cellset, false);
+                            }
+                            edges[front].push(*common_cellset);
+                        }
+                    }
+                },
+                CellSet::Equality(cell_vect) 
+                | CellSet::Expr(cell_vect, _)=> {
+                    for cell in cell_vect {
+                        match cell {
+                            Cell::Advice(col, row) => {
+                                for common_cellset in &self.tracker_advice[*col][*row] {
+                                    if !visited_cellsets.contains_key(&common_cellset) || !visited_cellsets[&common_cellset] {
+                                        if !visited_cellsets.contains_key(&common_cellset) {
+                                            queue.push_back(*common_cellset);
+                                            visited_cellsets.insert(*common_cellset, false);
+                                        }
+                                        edges[front].push(*common_cellset);
+                                    }
+                                }
+                            },
+                            Cell::Fixed(col, row) => {
+                                for common_cellset in &self.tracker_fixed[*col][*row] {
+                                    if !visited_cellsets.contains_key(&common_cellset) || !visited_cellsets[&common_cellset] {
+                                        if !visited_cellsets.contains_key(&common_cellset) {
+                                            queue.push_back(*common_cellset);
+                                            visited_cellsets.insert(*common_cellset, false);
+                                        }
+                                        edges[front].push(*common_cellset);
+                                    }
+                                }
+                            },
+                            Cell::Instance(col, row) => {
+                                for common_cellset in &self.tracker_instance[*col][*row] {
+                                    if !visited_cellsets.contains_key(&common_cellset) || !visited_cellsets[&common_cellset] {
+                                        if !visited_cellsets.contains_key(&common_cellset) {
+                                            queue.push_back(*common_cellset);
+                                            visited_cellsets.insert(*common_cellset, false);
+                                        }
+                                        edges[front].push(*common_cellset);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+            }
+        }
+
+        // construction graphviz output.
+
+        let mut string = String::from("digraph G {\n");
+        for (from_node, out_neighbors) in edges.iter().enumerate() {
+            for to_node in out_neighbors {
+                string += &"\"".to_string();
+                string += &format!("{:#?}", self.cellsets_vect[from_node]);
+                string += &"\"->\"".to_string();
+                string += &format!("{:#?}", self.cellsets_vect[*to_node]);
+                string += &"\"\n".to_string();
+            }
+        }
+        string += &"}";
+
+        println!("\n\n{}\n\n", string);
+
+        println!("Edges = {:#?}", edges);
+
+
 
     }
 
