@@ -281,29 +281,42 @@ impl<F: Field> Mul<F> for Value<F> {
 /// ));
 /// ``` 
 
+/// --- START OF CUSTOM FUNCTIONALITY --- ///
+
+/// A cell can be an advice, fixed, or instance cell
 #[derive(PartialEq, Eq, Hash, Clone, PartialOrd, Ord)]
 pub enum Cell {
     /// (col, row) for an advice cell
     Advice(usize, usize),
 
-    /// (col, row) for an instance cell
+    /// (col, row) for an fixed cell
     Fixed(usize, usize),
 
-    /// (col, row) for a fixed cell
+    /// (col, row) for a instance cell
     Instance(usize, usize)
 }
 
+// Custom cell print format. Example: Advice col 1, row 2 is A1.2
 impl fmt::Debug for Cell {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Advice(arg0, arg1) => write!(f, "A{}.{}", arg0, arg1),
-            Self::Fixed(arg0, arg1) => write!(f, "F{}.{}", arg0, arg1),
-            Self::Instance(arg0, arg1) => write!(f, "I{}.{}", arg0, arg1),
+            Self::Advice(arg0, arg1) => {
+                write!(f, "A{}.{}", arg0, arg1)
+            },
+            Self::Fixed(arg0, arg1) => {
+                write!(f, "F{}.{}", arg0, arg1)
+            },
+            Self::Instance(arg0, arg1) => {
+                 write!(f, "I{}.{}", arg0, arg1)
+            }
         }
     }
 }
 
-///
+/// A cell set holds a collection from the circuit:
+/// a. An instance/public input cell
+/// b. An equality relation over multiple cells
+/// c. An expression on cells that must equal 0 for a valid circuit
 #[derive(PartialEq, Eq, Clone)]
 pub enum CellSet<F: Field> {
     /// Instance cell with row and col
@@ -312,27 +325,28 @@ pub enum CellSet<F: Field> {
     /// List of cells assigned to be equal
     Equality(Vec<Cell>),
 
-    /// List of cells that are part of an expression
-    Expr(
-        Vec<Cell>, 
-        Vec<AbsExpression<F>>/*, Expression<F>*/
-    ) 
+    /// List of cells in an expression, along with the expression
+    Expr(Vec<Cell>, Vec<AbsExpression<F>>) 
 }
 
+// Custom cellset print format
 impl<F: Field> fmt::Debug for CellSet<F> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Instance(arg0, arg1) => write!(f, "Inst( I[{}][{}] )", arg0, arg1),
+            Self::Instance(arg0, arg1) => {
+                write!(f, "Inst( I{}.{} )", arg0, arg1)
+            }
             Self::Equality(v) => {
                 write!(f, "Eq( {:?} )", v)
             }
-            Self::Expr(v, _) => {
-                write!(f, "Expr( {:?} )", v)
+            Self::Expr(v, e) => {
+                write!(f, "Expr( {:?} : {:#?} )", v, e)
             }
         }
     }
 }
 
+// Custom hash function avoids hashing on the expression ast
 impl<F: Field> Hash for CellSet<F> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         match self {
@@ -353,6 +367,9 @@ impl<F: Field> Hash for CellSet<F> {
     }
 }
 
+// Custom full order: instance < equality < expr. 
+// Within instance sets, sort by col number then row number
+// Within equality and expression sets, sort on the vec of Cells
 impl<F: Field> Ord for CellSet<F> {
     fn cmp(&self, other: &Self) -> Ordering {
         match self {
@@ -361,11 +378,6 @@ impl<F: Field> Ord for CellSet<F> {
                     CellSet::Instance(co, ro) => {
                         let vec_other = vec![co, ro];
                         vec![c, r].cmp(&vec_other)
-                        // if c < co { Some(Ordering::Less) }
-                        // else if c > co { Some(Ordering::Greater) }
-                        // else if r < ro { Some(Ordering::Less) }
-                        // else if r > ro { Some(Ordering::Greater) }
-                        // Some(Ordering::Equal)
                     },
                     _ => Ordering::Less
                 }
@@ -387,104 +399,134 @@ impl<F: Field> Ord for CellSet<F> {
     }
 }
 
+// Custom partial order uses full order
 impl<F: Field> PartialOrd for CellSet<F> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-/// Low-degree expression representing an identity that must hold over the committed columns.
+/// Like the existing Expression enum in circuit.rs, except it uses my Cell enum
+/// so that the expressions reference absolute cell locations instead of offsets
+/// designed for gates that apply at every row
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum AbsExpression<F: Field> {
-    /// This is a constant polynomial
+
+    /// Constant polynomial (number?)
     Constant(F),
-    /// This is a virtual selector (selector index in order of when it was added: usize, simple? : bool)
+
+    /// Virtual selector. Selector(usize, bool), where usize is the index of the
+    /// selector in the order it was added, and bool is true if it's a "simple
+    /// selector" which has some additional restrictions
     Selector(Selector),
-    /// This is a fixed column queried at a certain relative location
+
+    /// Fixed cell at (fixed col, row)
     Fixed(usize, usize),
-    /// This is an advice (witness) column queried at a certain relative location
+
+    /// Advice (witness) cell at (advice col, row)
     Advice(usize, usize),
-    /// This is an instance (external) column queried at a certain relative location
+
+    /// Instance cell at (instance col, row)
     Instance(usize, usize),
-    /// This is a negated polynomial
+
+    /// Negated polynomial
     Negated(Box<AbsExpression<F>>),
-    /// This is the sum of two polynomials
+
+    /// Sum of two polynomials
     Sum(Box<AbsExpression<F>>, Box<AbsExpression<F>>),
-    /// This is the product of two polynomials
+
+    /// Product of two polynomials
     Product(Box<AbsExpression<F>>, Box<AbsExpression<F>>),
-    /// This is a scaled polynomial
+
+    /// Scaled polynomial
     Scaled(Box<AbsExpression<F>>, F),
 }
 
-///
+/// The MockProver object holds all the data about an instantiated circuit.
+/// Heavily extended for Logos functionality
 #[derive(Debug)]
 pub struct MockProver<F: Field> {
-    ///k
+    
+    /// Original MockProver members ///
+    
+    /// as far as I can tell this just ensures that n is a power of 2
     pub k: u32,
-    ///n
+    
+    /// Number of rows in the circuit, n = 2^k 
     pub n: u32,
-    ///cs
+
+    /// The ConstraintSystem holds a lot of pertinent info, notably the gates
+    /// and equality assignments
     pub cs: ConstraintSystem<F>,
 
     /// The regions in the circuit.
     pub regions: Vec<Region>,
-    /// The current region being assigned to. Will be `None` after the circuit has been
-    /// synthesized.
+
+    /// The current region being assigned to. Will be `None` after the circuit 
+    /// has been synthesized.
     pub current_region: Option<Region>,
 
     /// The fixed cells in the circuit, arranged as [column][row].
     pub fixed: Vec<Vec<CellValue<F>>>,
+
     /// The advice cells in the circuit, arranged as [column][row].
     pub advice: Vec<Vec<CellValue<F>>>,
+
     /// The instance cells in the circuit, arranged as [column][row].
     pub instance: Vec<Vec<InstanceValue<F>>>,
 
-    ///
+    /// Seems to hold the T/F values of each selector, although could be the
+    /// "simple" bool instead. Likely indexed [selector col][row]
     pub selectors: Vec<Vec<bool>>,
 
-    ///
+    /// Permutation holds several representations of cell equality constraints
     pub permutation: permutation::keygen::Assembly,
 
     /// A range of available rows for assignment and copies.
     pub usable_rows: Range<usize>,
 
-    ///
+    /// Added MockProver members ///
+
+    /// Tracks what advice cells have been visited during initial DFS
+    pub visited_advice: Vec<Vec<bool>>,
+    
+    /// Tracks what fixed cells have been visited during initial DFS
+    pub visited_fixed: Vec<Vec<bool>>,
+    
+    /// Tracks what instance cells have been visited during initial DFS
     pub visited_instance: Vec<Vec<bool>>,
 
-    ///
-    pub visited_fixed: Vec<Vec<bool>>,
-
-    ///
-    pub visited_advice: Vec<Vec<bool>>,
-
-    ///
+    /// Contains all the CellSets found in the circuit. HashSet to eliminate 
+    /// redundant entries
     pub cellsets: HashSet<CellSet<F>>,
 
-    ///
+    /// self.cellsets is transferred here and sorted after initial DFS so that
+    /// the CellSets can be sorted and referred to by index in later steps
     pub cellsets_vect: Vec<CellSet<F>>,
 
-    ///
-    pub tracker_instance: Vec<Vec<Vec<usize>>>,
-
-    ///
-    pub tracker_fixed: Vec<Vec<Vec<usize>>>,
-
-    ///
+    /// Records the CellSets each advice cell is a part of
+    /// tracker_advice[col][row] is a list of indices in cellsets_vect
     pub tracker_advice: Vec<Vec<Vec<usize>>>,
+    
+    /// Records the CellSets each instance cell is a part of. 
+    pub tracker_instance: Vec<Vec<Vec<usize>>>,
+    
+    /// Records the CellSets each fixed cell is a part of.
+    pub tracker_fixed: Vec<Vec<Vec<usize>>>,
 
 }
 
-/// used to construct a graph from the MockProver object
+/// PrintGraph has many functions that are used to construct a graph from the 
+/// original MockProver object.
 pub trait PrintGraph<F: Field> {
-    ///
-    fn evaluate_equal(&self, match_expr: &AbsExpression<F>, match_value: F) -> bool;
+    
 
-    /// constructs the full graph, this is the entry point to all this work and
-    /// not very well-defined yet
+    /// Main function to build the graph. This is the entry point to do
+    /// everything so far
     fn build_graph(&mut self);
     
-    /// DFS from cell. visits cells constrained by equalities and cells that
-    /// share gates with the current cell
+    /// Runs DFS to collect all CellSets in the circuit. Branches to all Cells
+    /// in an equality or expression with the parameter cell. 
     fn dfs(&mut self, cell: Cell);
 
     /// given a Cell enum, return a Vec of Cell enums representing all the cells
@@ -493,50 +535,61 @@ pub trait PrintGraph<F: Field> {
     /// permutations, will also return just the input
     fn get_cells_in_group(&self, cell: Cell) -> Vec<Cell>;
     
-    /// given a Cell enum, return a Vec of all the gate instances that contain 
-    /// the cell. each entry is of the form (gate_index, offset) where the gate 
-    /// is self.cs.gates[gate_index] and the offset represents what absolute row
-    /// a rotation 0 virtual cell would correspond to.
-    /// TODO: filter unused (selector 0) gates out from this list
+    /// Given a cell, return all the gate instances it's a part of. The return
+    /// include the gate's id, it's instantiated offset, and its non-zero
+    /// expressions as AbsExprs
     fn get_gate_instances(&self, cell: Cell) -> Vec<(usize, i32, Vec<AbsExpression<F>>)>;
 
-    /// given a Vec of gate instance of the form (gate_index, offset), return 
-    /// all the cells found in those gates.
+    /// Return a Vec of all the queried Cells in a gate instance, which is a 
+    /// gate instance and offset
     fn get_cells_in_gate(&self, gate_ind: usize, offset: i32) -> Vec<Cell>;
 
-    /// look in self.permutation.columns for a Column with index equal to cell's
+    /// Look in self.permutation.columns for a Column with index equal to cell's
     /// column, and type equal to cell's type. Return the index of this Column
-    /// if it exists, otherwise return -1
+    /// if it exists, otherwise return -1 (Selector columns)
     fn get_perm_col(&self, cell: Cell) -> i32;
 
-    ///
+    /// Converts all Expressions in a gate instance into a Vec of AbsExpressions.
+    /// If an expression simplifies to 0, it isn't included.
     fn get_abs_expressions(&self, gate: &Gate<F>, offset: i32) -> Vec<AbsExpression<F>>;
 
-    ///
+    /// Converts a halo2 Expression which uses VirtualCells into a Logos
+    /// AbsExpression which represents expressions for gate instances, which use
+    /// actual Cells that have a row instead of VirtualCells. Also recursively 
+    /// simplifies the generated AbsExpr using Cell values. For example, 
+    /// Prod(cell1, cell2) = cell2 if cell1 = 1
     fn get_abs_expression(&self, expr: &Expression<F>, offset: i32) -> AbsExpression<F>;
 
-    /// print all the cellsets
+    /// Returns true if match_expr is a Constant equal to match_value or a Cell 
+    /// that contains the value match_value
+    fn evaluate_equal(&self, match_expr: &AbsExpression<F>, match_value: F) -> bool;
+
+    /// print all the CellSets in sorted order. Only functional after calling 
+    /// self.build_graph()
     fn print_cellsets(&self);
 
-    /// print each tracking vector
+    /// print each tracking vector. Only functional after calling 
+    /// self.build_graph()
     fn print_trackers(&self);
 
-    /// === NOT IN USE === ///
+    // === NOT IN USE === //
     
-    /// constructs the full graph that grows from a single instance cell. for 
-    /// circuits with just one instance assignment, this is the only thing 
-    /// build_graph will return
-    fn build_graph_from_instance(&self, col: usize, row: usize);
+    // constructs the full graph that grows from a single instance cell. for 
+    // circuits with just one instance assignment, this is the only thing 
+    // build_graph will return
+    // fn build_graph_from_instance(&self, col: usize, row: usize);
 }
 
 impl<F: Field> PrintGraph<F> for MockProver<F> {
     
-    // print all the cellsets
+    // print all the CellSets in sorted order. Only functional after calling 
+    // self.build_graph()
     fn print_cellsets(&self) {
         println!("SORTED CELLSET: \n {:#?}", self.cellsets_vect);
     }
 
-    // print each tracking vector
+    // print each tracking vector. Only functional after calling 
+    // self.build_graph()
     fn print_trackers(&self) {
         println!("TRACKERS: \n");
         println!("Advice: {:#?}", self.tracker_advice);
@@ -544,11 +597,13 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
         println!("Instance: {:#?}", self.tracker_instance);
     }
 
+    // Main function to build the graph. This is the entry point to do
+    // everything so far
     fn build_graph(&mut self) {    
         
-        // iterate through all instance cells as the start of DFS, because
-        // they which seem to be the public input(s) of the circuit and the
-        // desired result of the computation
+        // Iterate through all instance cells (public inputs) as DFS start 
+        // points because they are the public inputs, and the circuit's only 
+        // guarenteed external access points.
         for (i, col) in self.instance.clone().iter().enumerate() {
             for (j, cell) in col.iter().enumerate() {
                 
@@ -559,33 +614,29 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
                     let icell = Cell::Instance(i, j);
                     self.dfs(icell);
                 }
-                // match cell {
-                //     InstanceValue::Assigned(_) => {
-                //         self.cellsets.insert(CellSet::Instance(i, j));
-                //         let icell = Cell::Instance(i, j);  
-                //         self.dfs(icell);
-                //     }
-                //     _ => (),
-                // }
             }
         }
 
-        // self.cellset_vect served its purpose by eliminating redundant elements
-        // now convert it to a vect so that it can be indexed
+        // self.cellsets served its purpose by eliminating redundant 
+        // elements. Now use it to populate a vect and sort it
         for elem in &self.cellsets {
             self.cellsets_vect.push(elem.clone());
         }
         self.cellsets_vect.sort();
 
-        // record which cellsets each cell is a member of in the self.tracker_... member vars
+        // Record which cellsets (indexed in self.cellsets_vect) each cell is a 
+        // member of in the self.tracker_... member variables
         for (i, cs) in self.cellsets_vect.iter().enumerate() {
             match cs {
-                // if cellset i is an instance(c, r) then add i to tracker_instance[c][r]
+
+                // If it's an Instance CellSet, then add i to 
+                // tracker_instance[c][r]
                 CellSet::Instance(col, row) => {
                     self.tracker_instance[*col][*row].push(i);
                 }
-                // otherwise cellset i is an equality(vect<type(c, r)>) or expr(vect<type(c, r)>)
-                // so add i to tracker_<type>[c][r] for all cells in cellset i
+
+                // Otherwise it's an Equality or Expr CellSet. So add each Cell 
+                // in the set to tracker_<type>[c][r]
                 CellSet::Equality(v)
                 | CellSet::Expr(v, _) => {
                     for c in v.iter() {
@@ -605,16 +656,28 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
             }
         }
 
-        // make dependency graph
-        let mut queue: VecDeque<usize> = VecDeque::new();
-        //let visited_cells: HashMap<Cell, bool> = HashMap::new();
+        // Make dependency graph //
 
-        // not present: you can queue it and give it an edge
-        // present, false: in queue; you can't queue it but you can give it an edge
-        // present, true: already processed; you can't queue it or give it an edge
+        // queue contains cells that need to be visited in a BFS that starts 
+        // from the instance cells
+        let mut queue: VecDeque<usize> = VecDeque::new();
+
+        // visited_cellsets is a HashMap that records the visited state of each
+        // cell. Every cell is in one of 3 situations in relation to the HM:
+        //  1. not present - cell hasn't been seen. you can queue it and give it
+        //     an edge
+        //  2. present, false - cell is already in queue; you can't queue it but
+        //     you can give it an edge
+        //  3. present, true - cell has already been fully processed; you can't 
+        //     queue it or give it an edge
         let mut visited_cellsets: HashMap<usize, bool> = HashMap::new();
 
-        // push back instance cellsets to the queue
+        // edges is an adjacency list that stores directed edges between 
+        // indexed CellSets.
+        let mut edges: Vec<Vec<usize>> = vec![vec![]; self.cellsets_vect.len()];
+
+        // Push Instance CellSets into queue. They start in state 2, so edges
+        // can be drawn to them but they can't be added to the queue again.
         for i in 0..self.cellsets_vect.len() {
             if let CellSet::Instance(_, _) = self.cellsets_vect[i] {
                 queue.push_back(i);
@@ -622,18 +685,20 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
             }
         }
 
-        println!("Queue after inserting instance vars = {:#?}", queue);
-
-        let mut edges: Vec<Vec<usize>> = vec![vec![]; self.cellsets_vect.len()];
-
-        // iterate
+        // BFS
         while !queue.is_empty() {
+
+            // pop the front CellSet and set it to state 3
             let front = queue.pop_front().unwrap();
-            println!("Front = {}", front);
             *visited_cellsets.get_mut(&front).unwrap() = true;
+
+            // visit the CellSet's neighbors. Behavior depends on CellSet type
             match &self.cellsets_vect[front] {
+
+                // Instance CellSet. This shouldn't be reached because all of 
+                // these should be queued at the start. But I guess just point
+                // to it and add it to the queue
                 CellSet::Instance(col, row) => {
-                    //this shouldn't happen, but i guess just point to it and add it to the queue
                     for common_cellset in &self.tracker_instance[*col][*row] {
                         if !visited_cellsets.contains_key(&common_cellset) || !visited_cellsets[&common_cellset] {
                             if !visited_cellsets.contains_key(&common_cellset) {
@@ -644,6 +709,9 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
                         }
                     }
                 },
+
+                // Equality and Expr CellSets: iterate through all the component
+                // cells, adding to the queue and adding edges as necessary
                 CellSet::Equality(cell_vect) 
                 | CellSet::Expr(cell_vect, _)=> {
                     for cell in cell_vect {
@@ -687,8 +755,7 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
             }
         }
 
-        // construction graphviz output.
-
+        // Temporary result: construct Graphviz-compatible output and print
         let mut string = String::from("digraph G {\n");
         for (from_node, out_neighbors) in edges.iter().enumerate() {
             for to_node in out_neighbors {
@@ -702,16 +769,15 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
         string += &"}";
 
         println!("\n\n{}\n\n", string);
-
         println!("Edges = {:#?}", edges);
-
-
-
     }
 
+    // Runs DFS to collect all CellSets in the circuit. Branches to all Cells
+    // in an equality or expression with the parameter cell. 
     fn dfs(&mut self, cell: Cell) {
         
-        // check if cell has been visited, and if not, then mark it as visited
+        // Check if cell has been visited. If not, then mark it as visited in
+        // the apropriate self.visited_<type> vec
         match cell {
             Cell::Advice(c, r) => {
                 if self.visited_advice[c][r] { return }
@@ -727,39 +793,42 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
             }
         }
 
-        // look for equalities
-        let equalities = self.get_cells_in_group(cell.clone());
-        let mut sorted_equalities = equalities.clone();
-        sorted_equalities.sort();
-        if sorted_equalities.len() > 1 {
-            self.cellsets.insert(CellSet::Equality(sorted_equalities));
+        // Find all cells in an equality with the current cell and insert them
+        // in self.cellsets. Then run DFS on all the equal cells
+        let mut equalities = self.get_cells_in_group(cell.clone());
+        equalities.sort();
+        if equalities.len() > 1 {
+            self.cellsets.insert(CellSet::Equality(equalities.clone()));
         }
-        
-
-        // look for expressions
-        let gates = self.get_gate_instances(cell.clone());
-        for (gate_ind, offset, exprs) in gates {
-            let gate_members = self.get_cells_in_gate(gate_ind, offset);
-            for gm in gate_members.iter() {
-                self.dfs(gm.clone());
-            }
-            let mut sorted_gms = gate_members.clone();
-            sorted_gms.sort();
-            self.cellsets.insert(CellSet::Expr(sorted_gms, exprs));
-        }
-
         for e in equalities.iter() {
             self.dfs(e.clone());
         }
-        
 
+        // Find all gate instances that contain the current cell. Insert the
+        // gate instances into self.cellsets. Then run DFS on all the other 
+        // members of those instances.  
+        let gates = self.get_gate_instances(cell.clone());
+        for (gate_ind, offset, exprs) in gates {
+            let mut gate_members = self.get_cells_in_gate(gate_ind, offset);
+            gate_members.sort();
+            //let mut sorted_gms = gate_members.clone();
+            self.cellsets.insert(CellSet::Expr(gate_members.clone(), exprs));
+            for gm in gate_members.iter() {
+                self.dfs(gm.clone());
+            }
+        }
     }
-     
+    
+    // given a Cell enum, return a Vec of Cell enums representing all the cells
+    // constrained to be equal to the input. return[0] is the original input 
+    // Cell, return[1...n] are the new ones, if any. If the cell isn't in
+    // permutations, will also return just the input
     fn get_cells_in_group(&self, cell: Cell) -> Vec<Cell> {
 
         let mut cells = vec![cell.clone()];
 
-        // find if Cell::Type(col, row) maps to anything in self.permutation.columns
+        // Check if Cell::Type(col, row) maps to anything in 
+        // self.permutation.columns. If not, just return the 1-element Vec.
         let perm_row = match cell {
             Cell::Advice(_, r) => r,
             Cell::Fixed(_, r) => r,
@@ -769,13 +838,21 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
         if perm_col == -1 {
             return cells;
         }
+        
+        // prepare to iterate through the equality mapping
         let perm_col = perm_col as usize;
         let mut cur_col = perm_col;
         let mut cur_row = perm_row;
         (cur_col, cur_row) = self.permutation.mapping[cur_col][cur_row];
         
+        // The equality mapping is a loop, so go step-by-step until the start is
+        // reached, adding each new Cell to the return Vec.  
         while (cur_col, cur_row) != (perm_col, perm_row) {
-            let Column {index: c_ind, column_type: c_type} = self.permutation.columns[cur_col];
+            let Column {
+                index: c_ind, 
+                column_type: c_type
+            } = self.permutation.columns[cur_col];
+
             let next_cell = match c_type {
                 Any::Fixed => Cell::Fixed(c_ind, cur_row),
                 Any::Advice => Cell::Advice(c_ind, cur_row),
@@ -788,18 +865,31 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
         cells
     }
 
+    // Given a cell, return all the gate instances it's a part of. The return
+    // include the gate's id, it's instantiated offset, and its non-zero
+    // expressions as AbsExprs
     fn get_gate_instances(&self, cell: Cell) -> Vec<(usize, i32, Vec<AbsExpression<F>>)> {
+        
+        // Get the halo2 Column associated with the cell, and extract its row
         let (col_obj, row) = match cell {
-            Cell::Advice(c, r) => { (Column {index: c, column_type: Any::Advice}, r) },
-            Cell::Fixed(c, r) => { (Column {index: c, column_type: Any::Fixed}, r) },
-            Cell::Instance(c, r) => { (Column {index: c, column_type: Any::Instance}, r) } 
-        };   
+            Cell::Advice(c, r) => { 
+                (Column {index: c, column_type: Any::Advice}, r) 
+            },
+            Cell::Fixed(c, r) => { 
+                (Column {index: c, column_type: Any::Fixed}, r) 
+            },
+            Cell::Instance(c, r) => { 
+                (Column {index: c, column_type: Any::Instance}, r) 
+            } 
+        };  
+
+        // Build a list of gate instances
         let mut gate_instances: Vec<(usize, i32, Vec<AbsExpression<F>>)> = vec![];
         
-        // loop over all gate types
+        // Loop over all gates
         for (i, g) in self.cs.gates.iter().enumerate() {
             
-            // find the minimum and maximum rotations from 0 among all queried gates
+            // Find the minimum and maximum rotations from 0 among all queried gates
             let mut max_rot = i32::MIN;
             let mut min_rot = i32::MAX;
             for vc in g.queried_cells().iter() {
@@ -808,14 +898,23 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
                 max_rot = max(max_rot, r);
             }
 
-            // if the gate queries the column that the cell is in, the gate can
-            // be included in gate_instances with an offset of row - rotation
-            // however, offset - min_rot >= 0 and offset + max_rot <= usable_rows
+            // For each gate, go through all the queried cells and see if
+            // there's an offset that allows the parameter gate to correspond
+            // with the given queried cell. Also check that this offset doesn't
+            // mean any other VirtualCells are instantiated out of bounds, and
+            // that the gate is useful (has at least 1 non-zero AbsExpr).
             for vc in g.queried_cells().iter() {
                 if vc.column == col_obj {
+
+                    // calculate offset given that the parameter cell is in a
+                    // given position. 
                     let offset = (row as i32) - vc.rotation.0;
-                    if self.usable_rows.start as i32 <= offset + min_rot && offset + max_rot < self.usable_rows.end as i32 {
+
+                    // Ensure the min and max rotations are still in bounds
+                    if self.usable_rows.start as i32 <= offset + min_rot 
+                        && offset + max_rot < self.usable_rows.end as i32 {
                         
+                        // Add the gate instance if it has non-zero AbsExprs
                         let abs_exprs = self.get_abs_expressions(g, offset);
                         if !abs_exprs.is_empty() {
                             gate_instances.push((i, offset, abs_exprs));
@@ -828,6 +927,8 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
         gate_instances
     }
 
+    // Converts all Expressions in a gate instance into a Vec of AbsExpressions.
+    // If an expression simplifies to 0, it isn't included.
     fn get_abs_expressions(&self, gate: &Gate<F>, offset: i32) -> Vec<AbsExpression<F>> {
         
         let mut abs_exprs = vec![];
@@ -841,14 +942,31 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
         abs_exprs
     }
 
+    // Converts a halo2 Expression which uses VirtualCells into a Logos
+    // AbsExpression which represents expressions for gate instances, which use
+    // actual Cells that have a row instead of VirtualCells. Also recursively 
+    // simplifies the generated AbsExpr using Cell values. For example, 
+    //Prod(cell1, cell2) = cell2 if cell1 = 1
     fn get_abs_expression(&self, expr: &Expression<F>, offset: i32) -> AbsExpression<F> {
         match expr {
+
+            // Directly map Constants, Selectors, Negations, and Scales to AbsExprs
             Expression::Constant(f) => {
                 AbsExpression::Constant(*f)
             }
             Expression::Selector(s) => {
                 AbsExpression::Selector(*s)
             }
+            Expression::Negated(boxed_expr) => {
+                let abs_expr = self.get_abs_expression(&**boxed_expr, offset);
+                AbsExpression::Negated(Box::new(abs_expr))
+            }
+            Expression::Scaled(boxed_expr, scale) => {
+                AbsExpression::Scaled(Box::new(self.get_abs_expression(boxed_expr, offset)), *scale)
+            }
+
+            // Replace Fixed, Advice, and Instance relative cells with absolute
+            // rows using the desired offset
             Expression::Fixed(FixedQuery {index: _, column_index, rotation} ) => {
                 AbsExpression::Fixed(*column_index, offset as usize + rotation.0 as usize)
             }
@@ -858,10 +976,8 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
             Expression::Instance(InstanceQuery {index: _, column_index, rotation}) => {
                 AbsExpression::Instance(*column_index, offset as usize + rotation.0 as usize)
             }
-            Expression::Negated(boxed_expr) => {
-                let abs_expr = self.get_abs_expression(&**boxed_expr, offset);
-                AbsExpression::Negated(Box::new(abs_expr))
-            }
+
+            // Recursively convert the two addends in a Sum, and simplify
             Expression::Sum(boxed1, boxed2) => {
                 let abs_expr_1 = self.get_abs_expression(&**boxed1, offset);
                 let abs_expr_2 = self.get_abs_expression(&**boxed2, offset);
@@ -878,6 +994,8 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
 
                 AbsExpression::Sum(Box::new(abs_expr_1), Box::new(abs_expr_2))
             }
+
+            // Recursively convert the two factors in a Product, and simplify
             Expression::Product(boxed1, boxed2) => {
                 let abs_expr_1 = self.get_abs_expression(&**boxed1, offset);
                 let abs_expr_2 = self.get_abs_expression(&**boxed2, offset);
@@ -904,13 +1022,11 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
 
                 AbsExpression::Product(Box::new(abs_expr_1), Box::new(abs_expr_2))
             }
-            Expression::Scaled(boxed_expr, scale) => {
-                AbsExpression::Scaled(Box::new(self.get_abs_expression(boxed_expr, offset)), *scale)
-            }
-
         }
     }
 
+    // Returns true if match_expr is a Constant equal to match_value or a Cell 
+    // that contains the value match_value
     fn evaluate_equal(&self, match_expr: &AbsExpression<F>, match_value: F) -> bool {
         match match_expr {
             AbsExpression::Constant(c) => {
@@ -929,10 +1045,24 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
         }
     }
 
+    // Return a Vec of all the queried Cells in a gate instance, which is a 
+    // gate instance and offset
     fn get_cells_in_gate(&self, gate_ind: usize, offset: i32) -> Vec<Cell> {
 
         let mut cells = HashSet::new();
-        for VirtualCell{column: Column{index: vc_ind, column_type: c_type}, rotation: Rotation(r)} in self.cs.gates[gate_ind].queried_cells() {
+        
+        // iterate over all the VirtualCells in queried_cells()
+        for VirtualCell{
+                column: Column {
+                    index: vc_ind, 
+                    column_type: c_type
+                }, 
+                rotation: Rotation(r)
+            } in self.cs.gates[gate_ind].queried_cells() {
+            
+            // use the rotation (relative row offset) of the abstract gate added
+            // to the offset to get the VirtualCell's absolute position for this
+            // gate instance, and add it to the Vec
             match c_type {
                 Any::Advice => {
                     cells.insert(Cell::Advice(*vc_ind, offset as usize + *r as usize));
@@ -949,8 +1079,14 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
         Vec::from_iter(cells)
     }
     
+
+    /// Look in self.permutation.columns for a Column with index equal to cell's
+    /// column, and type equal to cell's type. Return the index of this Column
+    /// if it exists, otherwise return -1 (Selector columns)
     fn get_perm_col(&self, cell: Cell) -> i32 {
-        
+
+        // Go through each column in self.permuation.columns and see if it
+        // matches the column type and index of cell
         for (pi, pcol) in self.permutation.columns.iter().enumerate() {
             match cell {
                 Cell::Advice(c, _) => {
@@ -970,38 +1106,13 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
                 }
             }
         }
+
+        // returns -1 if the column isn't found
         -1
     }
-
-    // // get all gates that might include the cell at (col, row)
-    // // return is of the form (gate #, row offset)
-    // fn get_gates(&self, col: usize, row: usize) -> Vec<(usize, i32)> {
-        
-    //     let labelled_col = self.permutation.columns[col];
-    //     let mut gate_instances: Vec<(usize, i32)> = vec![];
-        
-    //     for (i, g) in self.cs.gates.iter().enumerate() {
-    //         for vc in g.queried_cells().iter() {
-    //             if vc.column == labelled_col {
-    //                 gate_instances.push((i, (row as i32) - vc.rotation.0));
-    //             }
-    //         }
-    //     }
-        
-    //     return gate_instances
-    // }
-    
-    fn build_graph_from_instance(&self, _col: usize, _row: usize) {
-    // println!("instance column {}, row {} is assigned", col, row);
-        // let cells = self.get_cells_in_group(col, row);
-        // println!("this cell is associated with cells {:#?}", cells);
-        // for i in 1..cells.len() {
-        //     println!("cell {} is associated with gates {:#?} where each entry is (gate #, offset)", i, self.get_gates(cells[i].0, cells[i].1));
-        // }
-    }
-    
-    
 }
+
+/// --- END OF CUSTOM FUNCTIONALITY --- ///
 
 ///
 #[derive(Debug, Clone, PartialEq, Eq)]
