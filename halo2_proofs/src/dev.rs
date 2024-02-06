@@ -564,6 +564,12 @@ pub trait PrintGraph<F: Field> {
     /// that contains the value match_value
     fn evaluate_equal(&self, match_expr: &AbsExpression<F>, match_value: F) -> bool;
 
+    /// Modify the the data structures necessary to perform one iteration of 
+    /// BFS from the current cellset.
+    fn bfs_manip(&self, tracker: &Vec<usize>, 
+        visited_cellsets: &mut HashMap<usize, bool>, queue: &mut VecDeque<usize>, 
+        edges: &mut Vec<Vec<usize>>, cellset_index: usize);
+
     /// print all the CellSets in sorted order. Only functional after calling 
     /// self.build_graph()
     fn print_cellsets(&self);
@@ -699,15 +705,13 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
                 // these should be queued at the start. But I guess just point
                 // to it and add it to the queue
                 CellSet::Instance(col, row) => {
-                    for common_cellset in &self.tracker_instance[*col][*row] {
-                        if !visited_cellsets.contains_key(&common_cellset) || !visited_cellsets[&common_cellset] {
-                            if !visited_cellsets.contains_key(&common_cellset) {
-                                queue.push_back(*common_cellset);
-                                visited_cellsets.insert(*common_cellset, false);
-                            }
-                            edges[front].push(*common_cellset);
-                        }
-                    }
+                    self.bfs_manip(
+                        &self.tracker_instance[*col][*row],
+                        &mut visited_cellsets,
+                        &mut queue,
+                        &mut edges,
+                        front
+                    );
                 },
 
                 // Equality and Expr CellSets: iterate through all the component
@@ -717,37 +721,31 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
                     for cell in cell_vect {
                         match cell {
                             Cell::Advice(col, row) => {
-                                for common_cellset in &self.tracker_advice[*col][*row] {
-                                    if !visited_cellsets.contains_key(&common_cellset) || !visited_cellsets[&common_cellset] {
-                                        if !visited_cellsets.contains_key(&common_cellset) {
-                                            queue.push_back(*common_cellset);
-                                            visited_cellsets.insert(*common_cellset, false);
-                                        }
-                                        edges[front].push(*common_cellset);
-                                    }
-                                }
+                                self.bfs_manip(
+                                    &self.tracker_advice[*col][*row],
+                                    &mut visited_cellsets,
+                                    &mut queue,
+                                    &mut edges,
+                                    front
+                                );
                             },
                             Cell::Fixed(col, row) => {
-                                for common_cellset in &self.tracker_fixed[*col][*row] {
-                                    if !visited_cellsets.contains_key(&common_cellset) || !visited_cellsets[&common_cellset] {
-                                        if !visited_cellsets.contains_key(&common_cellset) {
-                                            queue.push_back(*common_cellset);
-                                            visited_cellsets.insert(*common_cellset, false);
-                                        }
-                                        edges[front].push(*common_cellset);
-                                    }
-                                }
+                                self.bfs_manip(
+                                    &self.tracker_fixed[*col][*row],
+                                    &mut visited_cellsets,
+                                    &mut queue,
+                                    &mut edges,
+                                    front
+                                );
                             },
                             Cell::Instance(col, row) => {
-                                for common_cellset in &self.tracker_instance[*col][*row] {
-                                    if !visited_cellsets.contains_key(&common_cellset) || !visited_cellsets[&common_cellset] {
-                                        if !visited_cellsets.contains_key(&common_cellset) {
-                                            queue.push_back(*common_cellset);
-                                            visited_cellsets.insert(*common_cellset, false);
-                                        }
-                                        edges[front].push(*common_cellset);
-                                    }
-                                }
+                                self.bfs_manip(
+                                    &self.tracker_instance[*col][*row],
+                                    &mut visited_cellsets,
+                                    &mut queue,
+                                    &mut edges,
+                                    front
+                                );
                             }
                         }
                     }
@@ -770,6 +768,24 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
 
         println!("\n\n{}\n\n", string);
         println!("Edges = {:#?}", edges);
+    }
+
+    // Modify the the data structures necessary to perform one iteration of 
+    // BFS from the current cellset.
+    fn bfs_manip(&self, tracker: &Vec<usize>, 
+        visited_cellsets: &mut HashMap<usize, bool>, queue: &mut VecDeque<usize>, 
+        edges: &mut Vec<Vec<usize>>, cellset_index: usize) {
+        
+        for common_cellset in tracker {
+            if !visited_cellsets.contains_key(&common_cellset) || !visited_cellsets[&common_cellset] {
+                if !visited_cellsets.contains_key(&common_cellset) {
+                    queue.push_back(*common_cellset);
+                    visited_cellsets.insert(*common_cellset, false);
+                }
+                edges[cellset_index].push(*common_cellset);
+            }
+        }
+
     }
 
     // Runs DFS to collect all CellSets in the circuit. Branches to all Cells
