@@ -409,12 +409,12 @@ impl<F: Field> Ord for CellSet<F> {
                     _ => Ordering::Greater,
                 }
             }
-            CellSet::SimpleExpr(v, e, o) => {
+            CellSet::SimpleExpr(v, _, o) => {
                 match other {
-                    CellSet::SimpleExpr(vo, eo, oo) => {
+                    CellSet::SimpleExpr(vo, _, oo) => {
                         let vcmp = v.cmp(&vo);
                         if vcmp != Ordering::Equal {
-                            o.cmp(&oo);
+                            return o.cmp(&oo);
                         }
                         vcmp
                     },
@@ -603,6 +603,10 @@ pub trait PrintGraph<F: Field> {
     /// print each tracking vector. Only functional after calling 
     /// self.build_graph()
     fn print_trackers(&self);
+
+    /// if exprs has a single expression and it's "simple" (form is Sum(<inputs>, Neg(<output_cell)))
+    /// return true, along with inputs and output_cell. otherwise return false and None for in and out
+    fn is_simple_expr(&self, exprs: &Vec<AbsExpression<F>>) -> (bool, Option<AbsExpression<F>>, Option<Cell>);
 
     // === NOT IN USE === //
     
@@ -855,9 +859,59 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
             let mut gate_members = self.get_cells_in_gate(gate_ind, offset);
             gate_members.sort();
             //let mut sorted_gms = gate_members.clone();
-            self.cellsets.insert(CellSet::Expr(gate_members.clone(), exprs));
+            //if there's one expr and it's a simple expr (Sum(AbsExpr, Neg(Cell)))
+            let (is_simple, input, output) = self.is_simple_expr(&exprs);
+            if is_simple {
+                self.cellsets.insert(CellSet::SimpleExpr(gate_members.clone(), input.unwrap(), output.unwrap()));
+            }
+            else {
+                self.cellsets.insert(CellSet::Expr(gate_members.clone(), exprs));
+            }
             for gm in gate_members.iter() {
                 self.dfs(gm.clone());
+            }
+        }
+    }
+
+    // if exprs has a single expression and it's "simple" (form is Sum(<inputs>, Neg(<output_cell)))
+    // return true, along with inputs and output_cell. otherwise return false and None for in and out
+    fn is_simple_expr(&self, exprs: &Vec<AbsExpression<F>>) -> (bool, Option<AbsExpression<F>>, Option<Cell>) {
+        if exprs.len() != 1 {
+            return (false, None, None);
+        }
+
+        println!("exprs[0] = {:#?}", exprs[0]);
+
+        match &exprs[0] {
+            AbsExpression::Sum(boxed1, boxed2) => {
+                let input = &**boxed1;
+                let rhs = &**boxed2;
+                match rhs {
+                    AbsExpression::Negated(boxed3) => {
+                        let output = &**boxed3;
+                        println!("input = {:#?}, output = {:#?}", input, output);
+                        match output {
+                            AbsExpression::Advice(c, r) => {
+                                return (true, Some(input.clone()), Some(Cell::Advice(*c, *r)));
+                            },
+                            AbsExpression::Fixed(c, r) => {
+                                return (true, Some(input.clone()), Some(Cell::Fixed(*c, *r)));
+                            },
+                            AbsExpression::Instance(c, r) => {
+                                return (true, Some(input.clone()), Some(Cell::Instance(*c, *r)));
+                            },
+                            _ => {
+                                return (false, None, None);
+                            }
+                        }
+                    },
+                    _ => {
+                        return (false, None, None);
+                    }
+                }
+            },
+            _ => {
+                return (false, None, None);
             }
         }
     }
