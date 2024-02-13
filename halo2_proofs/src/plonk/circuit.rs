@@ -1228,10 +1228,10 @@ impl<F: Field> ConstraintSystem<F> {
             "Gates must contain at least one constraint."
         );
 
-        println!("Printing polys in circuit.rs");
-        for p in polys.iter() {
-            println!("{:#?}", p);
-        }
+        // println!("Printing polys in circuit.rs");
+        // for p in polys.iter() {
+        //     println!("{:#?}", p);
+        // }
 
 
         self.gates.push(Gate {
