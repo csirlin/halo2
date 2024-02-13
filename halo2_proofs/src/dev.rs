@@ -326,7 +326,11 @@ pub enum CellSet<F: Field> {
     Equality(Vec<Cell>),
 
     /// List of cells in an expression, along with the expression
-    Expr(Vec<Cell>, Vec<AbsExpression<F>>) 
+    Expr(Vec<Cell>, Vec<AbsExpression<F>>),
+
+    /// Simple expression with inputs and a single output. Output = f(inputs)
+    /// List of cells, input expression, output cell
+    SimpleExpr(Vec<Cell>, AbsExpression<F>, Cell) 
 }
 
 // Custom cellset print format
@@ -341,6 +345,9 @@ impl<F: Field> fmt::Debug for CellSet<F> {
             }
             Self::Expr(v, e) => {
                 write!(f, "Expr( {:?} : {:#?} )", v, e)
+            }
+            Self::SimpleExpr(_, e, out) => {
+                write!(f, "SimpleExpr( {:?} = {:#?} )", out, e)
             }
         }
     }
@@ -363,13 +370,19 @@ impl<F: Field> Hash for CellSet<F> {
                 state.write_u8(3);
                 v.hash(state);
             }
+            CellSet::SimpleExpr(v, _, out) => {
+                state.write_u8(4);
+                v.hash(state);
+                out.hash(state);
+            }
         }
     }
 }
 
-// Custom full order: instance < equality < expr. 
+// Custom full order: instance < equality < expr < simpleexpr. 
 // Within instance sets, sort by col number then row number
 // Within equality and expression sets, sort on the vec of Cells
+// Within simpleexprs, sort on the vec of Cells, then the output Cell
 impl<F: Field> Ord for CellSet<F> {
     fn cmp(&self, other: &Self) -> Ordering {
         match self {
@@ -386,13 +399,26 @@ impl<F: Field> Ord for CellSet<F> {
                 match other {
                     CellSet::Instance(_, _) => Ordering::Greater,
                     CellSet::Equality(vo) => v.cmp(vo),
-                    CellSet::Expr(_, _) => Ordering::Less
+                    _ => Ordering::Less,
                 }
             },
             CellSet::Expr(v, _) => {
                 match other {
                     CellSet::Expr(vo, _) => v.cmp(vo),
+                    CellSet::SimpleExpr(_, _, _) => Ordering::Less,
                     _ => Ordering::Greater,
+                }
+            }
+            CellSet::SimpleExpr(v, e, o) => {
+                match other {
+                    CellSet::SimpleExpr(vo, eo, oo) => {
+                        let vcmp = v.cmp(&vo);
+                        if vcmp != Ordering::Equal {
+                            o.cmp(&oo);
+                        }
+                        vcmp
+                    },
+                    _ => Ordering::Greater
                 }
             }
         }
@@ -640,11 +666,11 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
                 CellSet::Instance(col, row) => {
                     self.tracker_instance[*col][*row].push(i);
                 }
-
                 // Otherwise it's an Equality or Expr CellSet. So add each Cell 
                 // in the set to tracker_<type>[c][r]
                 CellSet::Equality(v)
-                | CellSet::Expr(v, _) => {
+                | CellSet::Expr(v, _) 
+                | CellSet::SimpleExpr(v, _, _) => {
                     for c in v.iter() {
                         match c {
                             Cell::Advice(col, row) => {
@@ -717,7 +743,8 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
                 // Equality and Expr CellSets: iterate through all the component
                 // cells, adding to the queue and adding edges as necessary
                 CellSet::Equality(cell_vect) 
-                | CellSet::Expr(cell_vect, _)=> {
+                | CellSet::Expr(cell_vect, _)
+                | CellSet::SimpleExpr(cell_vect, _, _) => {
                     for cell in cell_vect {
                         match cell {
                             Cell::Advice(col, row) => {
