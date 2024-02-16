@@ -11,6 +11,7 @@ use std::hash::Hasher;
 use std::iter;
 use std::ops::{Add, Mul, Neg, Range};
 use ff::Field;
+use zkcir::ir::CirBuilder;
 use std::hash::Hash;
 
 use crate::plonk::AdviceQuery;
@@ -545,8 +546,12 @@ pub struct MockProver<F: Field> {
 /// PrintGraph has many functions that are used to construct a graph from the 
 /// original MockProver object.
 pub trait PrintGraph<F: Field> {
-    
+    /// build the edges graph when there's only simple expressions
+    fn build_simple(&self) -> Vec<Vec<usize>>;
 
+    /// build the edges graph in the general case where direction can't be inferred
+    fn build_default(&self) -> Vec<Vec<usize>>;
+    
     /// Main function to build the graph. This is the entry point to do
     /// everything so far
     fn build_graph(&mut self);
@@ -608,6 +613,9 @@ pub trait PrintGraph<F: Field> {
     /// return true, along with inputs and output_cell. otherwise return false and None for in and out
     fn is_simple_expr(&self, exprs: &Vec<AbsExpression<F>>) -> (bool, Option<AbsExpression<F>>, Option<Cell>);
 
+    ///output as Chris' AST
+
+    fn output(&self, topological_order: Vec<usize>);
     // === NOT IN USE === //
     
     // constructs the full graph that grows from a single instance cell. for 
@@ -692,8 +700,148 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
             }
         }
 
+        let mut simple = true;
+        for cell in &self.cellsets_vect {
+            match cell {
+                CellSet::Expr(_, _) => {
+                    simple = false;
+                    break;
+                }
+                _ => { }
+            }
+        }
+
+        let edges = if simple {
+            println!("Simple");
+            self.build_simple()
+        }
+        else {
+            println!("Not simple");
+            self.build_default()
+        };
+
+
+        let mut adj_list = HashMap::new();
+        for i in 0..edges.len() {
+            adj_list.insert(i, edges[i].clone());
+        }
+
+        if let Some(order) = topological_sort(&adj_list) {
+            println!("Top order = {:#?}", order);
+
+            let order_no_instance: Vec<usize> = order.iter().filter(|num| match self.cellsets_vect[**num] {
+               CellSet::Instance(..) => false,
+               _ => true 
+            }).map(|elem| *elem).collect();
+
+            self.output(order_no_instance);
+
+        }
+        else {
+            println!("CYCLE IN GRAPH");
+            return;
+        }
+
+        // Temporary result: construct Graphviz-compatible output and print
+        let mut string = String::from("digraph G {\n");
+        for (from_node, out_neighbors) in edges.iter().enumerate() {
+            for to_node in out_neighbors {
+                string += &"\"".to_string();
+                string += &format!("{:#?}", self.cellsets_vect[from_node]);
+                string += &"\"->\"".to_string();
+                string += &format!("{:#?}", self.cellsets_vect[*to_node]);
+                string += &"\"\n".to_string();
+            }
+        }
+        string += &"}";
+
+        println!("\n\n{}\n\n", string);
+        println!("Edges = {:#?}", edges);
+
         // Make dependency graph //
 
+
+    }
+
+    fn output(&self, topological_order: Vec<usize>) {
+        let mut cir = CirBuilder::new();
+        cir.num_wires(self.usable_rows.end as u64 * (self.fixed.len() + self.advice.len() + self.instance.len()) as u64);
+
+    }
+
+    fn build_simple(&self) -> Vec<Vec<usize>> {
+        let mut out_edges: Vec<Vec<(usize, &Cell)>> = vec![vec![]; self.cellsets_vect.len()];
+        let mut in_edges: Vec<Vec<(usize, &Cell)>> = vec![vec![]; self.cellsets_vect.len()];
+
+
+        // connect all the simpleexprs
+        for (i, cellset) in self.cellsets_vect.iter().enumerate() {
+            match cellset {
+                CellSet::SimpleExpr(v, _, out) => {
+                    for cell in v {
+                        let members = match cell {
+                            Cell::Advice(c, r) => &self.tracker_advice[*c][*r],
+                            Cell::Fixed(c, r) => &self.tracker_fixed[*c][*r],
+                            Cell::Instance(c, r) => &self.tracker_instance[*c][*r]
+                        };
+                        if cell == out {
+                            for member in members {
+                                if *member != i {
+                                    out_edges[i].push((*member, cell));
+                                    in_edges[*member].push((i, cell));
+                                }
+                            }
+                        }
+                        else {
+                            for member in members {
+                                if *member != i {
+                                    out_edges[*member].push((i, cell));
+                                    in_edges[i].push((*member, cell));
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        return out_edges
+        .iter()
+        .map(|inner_vec| {
+            inner_vec
+                .iter()
+                .map(|&(usize_val, _)| usize_val)
+                .collect()
+        })
+        .collect();
+
+        // // connect all the equalities
+        // for (i, cellset) in self.cellsets_vect.iter().enumerate() {
+        //     match cellset {
+        //         CellSet::Equality(v) {
+                    
+        //         },
+        //         _ => { }
+        //     }
+        // }
+
+        
+
+    
+        // return out_edges.clone()
+        // .iter()
+        // .map(|inner_vec| {
+        //     inner_vec
+        //         .iter()
+        //         .map(|&(usize_val, _)| usize_val)
+        //         .collect()
+        // })
+        // .collect();
+
+    }
+
+    fn build_default(&self) -> Vec<Vec<usize>> {
         // queue contains cells that need to be visited in a BFS that starts 
         // from the instance cells
         let mut queue: VecDeque<usize> = VecDeque::new();
@@ -784,21 +932,8 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
             }
         }
 
-        // Temporary result: construct Graphviz-compatible output and print
-        let mut string = String::from("digraph G {\n");
-        for (from_node, out_neighbors) in edges.iter().enumerate() {
-            for to_node in out_neighbors {
-                string += &"\"".to_string();
-                string += &format!("{:#?}", self.cellsets_vect[from_node]);
-                string += &"\"->\"".to_string();
-                string += &format!("{:#?}", self.cellsets_vect[*to_node]);
-                string += &"\"\n".to_string();
-            }
-        }
-        string += &"}";
+        edges
 
-        println!("\n\n{}\n\n", string);
-        println!("Edges = {:#?}", edges);
     }
 
     // Modify the the data structures necessary to perform one iteration of 
@@ -1208,6 +1343,57 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
         -1
     }
 }
+
+
+fn topological_sort(adj_list: &HashMap<usize, Vec<usize>>) -> Option<Vec<usize>> {
+    let mut visited = HashSet::new();
+    let mut stack = Vec::new();
+    let mut result = Vec::new();
+
+    for &node in adj_list.keys() {
+        if !visited.contains(&node) {
+            if !dfs(node, adj_list, &mut visited, &mut stack) {
+                return None; // Graph contains a cycle
+            }
+        }
+    }
+
+    while let Some(node) = stack.pop() {
+        result.push(node);
+    }
+
+    Some(result)
+}
+
+fn dfs(
+    node: usize,
+    adj_list: &HashMap<usize, Vec<usize>>,
+    visited: &mut HashSet<usize>,
+    stack: &mut Vec<usize>,
+) -> bool {
+    if visited.contains(&node) {
+        return true;
+    }
+
+    visited.insert(node);
+
+    if let Some(neighbors) = adj_list.get(&node) {
+        for &neighbor in neighbors {
+            if !dfs(neighbor, adj_list, visited, stack) {
+                return false; // Graph contains a cycle
+            }
+        }
+    }
+
+    stack.push(node);
+    true
+}
+
+fn remove_duplicates<T: Eq + std::hash::Hash + Clone>(vec: Vec<T>) -> Vec<T> {
+    let set: HashSet<_> = vec.into_iter().collect();
+    set.into_iter().collect()
+}
+
 
 /// --- END OF CUSTOM FUNCTIONALITY --- ///
 
