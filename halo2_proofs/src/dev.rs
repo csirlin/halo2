@@ -1,5 +1,7 @@
 //! Tools for developing circuits.
+extern crate alloc;
 
+use alloc::string::String;
 use std::cmp::max;
 use std::cmp::min;
 use std::cmp::Ordering;
@@ -11,7 +13,6 @@ use std::hash::Hasher;
 use std::iter;
 use std::ops::{Add, Mul, Neg, Range};
 use ff::Field;
-use zkcir::ir::CirBuilder;
 use std::hash::Hash;
 
 use crate::plonk::AdviceQuery;
@@ -614,8 +615,13 @@ pub trait PrintGraph<F: Field> {
     fn is_simple_expr(&self, exprs: &Vec<AbsExpression<F>>) -> (bool, Option<AbsExpression<F>>, Option<Cell>);
 
     ///output as Chris' AST
-
     fn output(&self, topological_order: Vec<usize>);
+
+    /// zkcir ast expression builder - helper function for output
+    fn build_zkcir_expression(&self, exp: &AbsExpression<F>) -> zkcir::ast::Expression;
+
+    /// zkcir ast equality builder - helper function for output
+    fn build_equality(&self, cells: &Vec<Cell>, pos: usize) -> zkcir::ast::Expression;
     // === NOT IN USE === //
     
     // constructs the full graph that grows from a single instance cell. for 
@@ -742,21 +748,21 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
             return;
         }
 
-        // Temporary result: construct Graphviz-compatible output and print
-        let mut string = String::from("digraph G {\n");
-        for (from_node, out_neighbors) in edges.iter().enumerate() {
-            for to_node in out_neighbors {
-                string += &"\"".to_string();
-                string += &format!("{:#?}", self.cellsets_vect[from_node]);
-                string += &"\"->\"".to_string();
-                string += &format!("{:#?}", self.cellsets_vect[*to_node]);
-                string += &"\"\n".to_string();
-            }
-        }
-        string += &"}";
+        // // Temporary result: construct Graphviz-compatible output and print
+        // let mut string = String::from("digraph G {\n");
+        // for (from_node, out_neighbors) in edges.iter().enumerate() {
+        //     for to_node in out_neighbors {
+        //         string += &"\"".to_string();
+        //         string += &format!("{:#?}", self.cellsets_vect[from_node]);
+        //         string += &"\"->\"".to_string();
+        //         string += &format!("{:#?}", self.cellsets_vect[*to_node]);
+        //         string += &"\"\n".to_string();
+        //     }
+        // }
+        // string += &"}";
 
-        println!("\n\n{}\n\n", string);
-        println!("Edges = {:#?}", edges);
+        // println!("\n\n{}\n\n", string);
+        // println!("Edges = {:#?}", edges);
 
         // Make dependency graph //
 
@@ -764,9 +770,235 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
     }
 
     fn output(&self, topological_order: Vec<usize>) {
+        use zkcir::ast::{BinOp, Stmt, Ident, Expression, Value, Wire};
+        use zkcir::ir::CirBuilder;
         let mut cir = CirBuilder::new();
         cir.num_wires(self.usable_rows.end as u64 * (self.fixed.len() + self.advice.len() + self.instance.len()) as u64);
+ 
+        // print the instance cells (public inputs): Stmt::Local(Ident::String("public_input_col_row"), Expr::Ident::VirtualWire(wire!(instance, row r, column col, value v)))
+        for (i, instance_col) in self.instance.iter().enumerate() {
+            for (j, instance_cell) in instance_col.iter().enumerate() {
+                match instance_cell {
+                    InstanceValue::Assigned(val) => {
+                        cir.add_stmt(
+                            Stmt::Local(
+                                Ident::String(format!("public_input_{}_{}", i, j)), 
+                                Expression::Ident(
+                                    Ident::Wire(
+                                        Wire{ 
+                                            row: j, 
+                                            column: i, 
+                                            value: Some(zkcir::ast::Value::U64(0)) 
+                                        }
+                                    )
+                                ) 
+                            )
+                        );
+                    },
+                    _ => { }
+                }
+            }
+        }
 
+        // print all the fixed/advice cells that only appear in a single cellset (means it's not reused anywhere)
+        for (i, fixed_col) in self.tracker_fixed.iter().enumerate() {
+            for (j, fixed_cell_cellsets) in fixed_col.iter().enumerate() {
+                if fixed_cell_cellsets.len() == 1 {
+                    cir.add_stmt(
+                        Stmt::Local(
+                            Ident::String(format!("fixed_cell_{}_{}", i, j)), 
+                            zkcir::ast::Expression::Ident(
+                                Ident::Wire (
+                                    Wire { 
+                                        row: j, 
+                                        column: i, 
+                                        value: Some(zkcir::ast::Value::U64(0)) 
+                                    }
+                                )
+                            ) 
+                        )
+                    );
+                }
+            }
+        }
+        for (i, advice_col) in self.tracker_advice.iter().enumerate() {
+            for (j, advice_cell_cellsets) in advice_col.iter().enumerate() {
+                if advice_cell_cellsets.len() == 1 {
+                    cir.add_stmt(
+                        Stmt::Local (
+                            Ident::String (format!("fixed_cell_{}_{}", i, j)), 
+                            zkcir::ast::Expression::Ident(
+                                Ident::Wire(
+                                    Wire { 
+                                        row: j, 
+                                        column: i, 
+                                        value: Some(zkcir::ast::Value::U64(0))
+                                    }
+                                )
+                            ) 
+                        )
+                    );
+                }
+            }
+        }
+
+
+        // insert expressions in order of topological order: csvect[to[0]], csvect[to[1]], ...
+            // if simple_expr: let <out> = <expr>: Stmt::Local(Ident::String("type_col_row") = Expr::...)
+            // if equality: assert!(eq1 == eq2 == eq3 ...) - Stmt::Verify(Expr::Binop(..., Equal, ...))
+            // if expr: assert!(<expr>)
+        for index in topological_order {
+            match &self.cellsets_vect[index] {
+                CellSet::Equality(v) => {
+                    // make an expr of equals
+                    cir.add_stmt(
+                        Stmt::Verify (
+                            self.build_equality(v, 0)
+                        )
+                    );
+                },
+                CellSet::SimpleExpr(_, exp, out) => {
+                    cir.add_stmt(
+                        Stmt::Local(
+                            Ident::String (format!("{:#?}", out)),
+                            self.build_zkcir_expression(exp)
+                        )
+                    );
+                },
+                CellSet::Expr(v, exps) => {
+                    for exp in exps {
+                        cir.add_stmt(
+                            Stmt::Verify (
+                                Expression::BinaryOperator {
+                                    lhs: Box::new(self.build_zkcir_expression(exp)),
+                                    binop: BinOp::Equal,
+                                    rhs: Box::new(Expression::Value(Value::U64(0)))
+                                }
+                            )
+                        );
+                    }
+                },
+                _ => { }
+            }
+        }
+
+        let output = cir.build();
+        println!("{}", output.to_code_ir());
+    }
+    
+    fn build_zkcir_expression(&self, exp: &AbsExpression<F>) -> zkcir::ast::Expression {
+        use zkcir::ast::{Ident, Value, BinOp, Wire};
+        use zkcir::ast::Expression;
+        match exp {
+            AbsExpression::Constant(c) => {
+                Expression::Ident(Ident::String(format!("{:#?}", c)))
+            },
+            AbsExpression::Selector(s) => {
+                panic!("encountered selector in MockProver.build_zkcir_expression()")
+            },
+            // TODO: Let Value hold a string to fit a debug print of F
+            AbsExpression::Fixed(c, r) => {
+                let CellValue::Assigned(val) = self.fixed[*c][*r] else {
+                    panic!("cell in AbsExpression not assigned");
+                };
+                Expression::Ident(Ident::Wire( Wire { row: *r, column: *c, value: Some(Value::U64(0))}))
+            },
+            AbsExpression::Advice(c, r) => {
+                let CellValue::Assigned(val) = self.advice[*c][*r] else {
+                    panic!("cell in AbsExpression not assigned");
+                };
+                Expression::Ident(Ident::Wire( Wire { row: *r, column: *c, value: Some(Value::U64(0))}))
+            },
+            AbsExpression::Instance(c, r) => {
+                let InstanceValue::Assigned(val) = self.instance[*c][*r] else {
+                    panic!("cell in AbsExpression not assigned");
+                };
+                Expression::Ident(Ident::Wire( Wire { row: *r, column: *c, value: Some(Value::U64(0))}))
+            },
+            // TODO: add UniOP (neg)
+            AbsExpression::Negated(boxed) => {
+                let exp = &**boxed;
+                Expression::BinaryOperator { 
+                    lhs: Box::new(Expression::Value(Value::U64(0))),
+                    binop: BinOp::Subtract, 
+                    rhs: Box::new(self.build_zkcir_expression(exp)) 
+                }
+            }
+            AbsExpression::Sum(boxed_left, boxed_right) => {
+                let left = &**boxed_left;
+                let right = &**boxed_right;
+                Expression::BinaryOperator { 
+                    lhs: Box::new(self.build_zkcir_expression(left)), 
+                    binop: BinOp::Add, 
+                    rhs: Box::new(self.build_zkcir_expression(right)) 
+                }
+            }
+            AbsExpression::Product(boxed_left, boxed_right) => {
+                let left = &**boxed_left;
+                let right = &**boxed_right;
+                Expression::BinaryOperator { 
+                    lhs: Box::new(self.build_zkcir_expression(left)), 
+                    binop: BinOp::Multiply, 
+                    rhs: Box::new(self.build_zkcir_expression(right)) 
+                }
+            }
+            // TODO: let value hold a string to represent F
+            AbsExpression::Scaled(boxed, scale) => {
+                let exp = &**boxed;
+                Expression::BinaryOperator { 
+                    lhs: Box::new(Expression::Value(Value::U64(0))),
+                    binop: BinOp::Multiply, 
+                    rhs: Box::new(self.build_zkcir_expression(exp)) 
+                }
+            }
+        }
+    }
+
+    fn build_equality(&self, cells: &Vec<Cell>, pos: usize) -> zkcir::ast::Expression {
+        use zkcir::ast::{Ident, Value, BinOp, Wire};
+        use zkcir::ast::Expression;
+        if cells.len() - pos < 2 {
+            panic!("less than two cells remaining in equality vector passed to MockProver.build_equality");
+        }
+        else {
+            //TODO: modify Ident::Wire to hold wire type (advice/fixed/inst)
+            let wire1 = match cells[pos] {
+                | Cell::Advice(c, r) 
+                | Cell::Fixed(c, r) 
+                | Cell::Instance(c, r)=> {
+                    Wire { 
+                        row: r, 
+                        column: c, 
+                        value: Some(Value::U64(0))
+                    }
+                }
+            };
+            if cells.len() - pos == 2 {
+                let wire2 = match cells[pos+1] {
+                    | Cell::Advice(c, r) 
+                    | Cell::Fixed(c, r) 
+                    | Cell::Instance(c, r)=> {
+                        Wire { 
+                            row: r, 
+                            column: c, 
+                            value: Some(Value::U64(0))
+                        }
+                    }
+                };
+                Expression::BinaryOperator {
+                    lhs: Box::new(Expression::Ident(Ident::Wire(wire1))),
+                    binop: BinOp::Equal,
+                    rhs: Box::new(Expression::Ident(Ident::Wire(wire2)))
+                }
+            }
+            else {
+                Expression::BinaryOperator { 
+                    lhs: Box::new(Expression::Ident(Ident::Wire(wire1))),
+                    binop: BinOp::Equal,
+                    rhs: Box::new(self.build_equality(cells, pos+1))
+                }
+            }
+        }
     }
 
     fn build_simple(&self) -> Vec<Vec<usize>> {

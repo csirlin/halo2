@@ -2,9 +2,7 @@ use std::marker::PhantomData;
 
 use group::ff::Field;
 use halo2_proofs::{
-    circuit::{AssignedCell, Chip, Layouter, Region, SimpleFloorPlanner, Value},
-    plonk::{Advice, Circuit, Column, ConstraintSystem, Error, Fixed, Instance, Selector},
-    poly::Rotation, dev::{MockProver, PrintGraph},
+    circuit::{AssignedCell, Chip, Layouter, Region, SimpleFloorPlanner, Value}, dev::{MockProver, PrintGraph}, plonk::{Advice, Circuit, Column, ConstraintSystem, Error, Expression, Fixed, Instance, Selector}, poly::Rotation
 };
 use pasta_curves::Fp;
 
@@ -114,6 +112,10 @@ impl<F: Field> FieldChip<F> {
             // has the following properties:
             // - When s_mul = 0, any value is allowed in lhs, rhs, and out.
             // - When s_mul != 0, this constrains lhs * rhs = out.
+            let one = F::ONE;
+            let four = one.double().double();
+            let five = four.add(F::ONE);
+            //vec![s_mul * (lhs.clone() * rhs - out * lhs - Expression::Constant(five)) * Expression::Constant(four)]
             vec![s_mul * (lhs * rhs - out)]
         });
 
@@ -370,15 +372,15 @@ fn main() {
     let mut public_inputs = vec![c];
 
     // Given the correct public input, our circuit will verify.
-    let prover = MockProver::run(k, &circuit, vec![public_inputs.clone()]).unwrap();
-    assert_eq!(prover.verify(), Ok(()));
+    let mut prover = MockProver::run(k, &circuit, vec![public_inputs.clone()]).unwrap();
+    //assert_eq!(prover.verify(), Ok(()));
     
     // print_class(prover);
 
     // If we try some other public input, the proof will fail!
     public_inputs[0] += Fp::one();
-    let mut prover = MockProver::run(k, &circuit, vec![public_inputs]).unwrap();
-    assert!(prover.verify().is_err());
+    // let mut prover = MockProver::run(k, &circuit, vec![public_inputs]).unwrap();
+    // assert!(prover.verify().is_err());
     // ANCHOR_END: test-circuit
     
     // CircuitLayout - check layout.png
@@ -407,8 +409,9 @@ fn main() {
     // print it out to use with command-line tools.
     print!("{}", dot_string);
     prover.build_graph();
-    prover.print_cellsets();
-    prover.print_trackers();
+    // prover.print_cellsets();
+    // prover.print_trackers();
+    // prover.output();
 }
 
 
