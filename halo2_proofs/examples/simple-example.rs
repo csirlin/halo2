@@ -372,8 +372,8 @@ fn main() {
     let mut public_inputs = vec![c];
 
     // Given the correct public input, our circuit will verify.
-    let mut prover = MockProver::run(k, &circuit, vec![public_inputs.clone()]).unwrap();
-    //assert_eq!(prover.verify(), Ok(()));
+    let prover = MockProver::run(k, &circuit, vec![public_inputs.clone()]).unwrap();
+    assert_eq!(prover.verify(), Ok(()));
     
     // print_class(prover);
 
@@ -407,8 +407,6 @@ fn main() {
 
     // Now you can either handle it in Rust, or just
     // print it out to use with command-line tools.
-    print!("{}", dot_string);
-    prover.build_graph();
     // prover.print_cellsets();
     // prover.print_trackers();
     // prover.output();
