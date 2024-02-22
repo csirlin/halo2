@@ -2,6 +2,7 @@
 extern crate alloc;
 
 use alloc::string::String;
+use chrono::Timelike;
 use std::cmp::max;
 use std::cmp::min;
 use std::cmp::Ordering;
@@ -9,11 +10,13 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::fmt;
+use std::fs;
 use std::hash::Hasher;
 use std::iter;
 use std::ops::{Add, Mul, Neg, Range};
 use ff::Field;
 use std::hash::Hash;
+use chrono::Local;
 
 use crate::plonk::AdviceQuery;
 use crate::plonk::Assigned;
@@ -748,27 +751,9 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
             return;
         }
 
-        // // Temporary result: construct Graphviz-compatible output and print
-        // let mut string = String::from("digraph G {\n");
-        // for (from_node, out_neighbors) in edges.iter().enumerate() {
-        //     for to_node in out_neighbors {
-        //         string += &"\"".to_string();
-        //         string += &format!("{:#?}", self.cellsets_vect[from_node]);
-        //         string += &"\"->\"".to_string();
-        //         string += &format!("{:#?}", self.cellsets_vect[*to_node]);
-        //         string += &"\"\n".to_string();
-        //     }
-        // }
-        // string += &"}";
-
-        // println!("\n\n{}\n\n", string);
-        // println!("Edges = {:#?}", edges);
-
-        // Make dependency graph //
-
-
     }
 
+    // generate a zkcir::Cir containing all the circuit's data
     fn output(&self, topological_order: Vec<usize>) {
         use zkcir::ast::{BinOp, Stmt, Ident, Expression, Value, Wire};
         use zkcir::ir::CirBuilder;
@@ -842,7 +827,6 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
             }
         }
 
-
         // insert expressions in order of topological order: csvect[to[0]], csvect[to[1]], ...
             // if simple_expr: let <out> = <expr>: Stmt::Local(Ident::String("type_col_row") = Expr::...)
             // if equality: assert!(eq1 == eq2 == eq3 ...) - Stmt::Verify(Expr::Binop(..., Equal, ...))
@@ -882,10 +866,19 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
             }
         }
 
+        // build and output zkcir::Cir object to file named with timestamp
         let output = cir.build();
-        println!("{}", output.to_code_ir());
+        let local_time = Local::now();
+        let filename = format!("output/output_{}-{}-{}", local_time.hour(), local_time.minute(), local_time.second());
+        if let Err(err) = fs::write(format!("{}{}", filename, ".cir"), output.to_code_ir()) {
+            eprintln!("Error generating cir file \"{}\": {}", format!("{}{}", filename, ".cir"), err);
+        }
+        if let Err(err) = fs::write(format!("{}{}", filename, ".json"), output.to_string().unwrap()) {
+            eprintln!("Error generating json file \"{}\": {}", format!("{}{}", filename, ".json"), err);
+        }
     }
     
+    // build a zkcir::ast::Expression from an AbsExpression
     fn build_zkcir_expression(&self, exp: &AbsExpression<F>) -> zkcir::ast::Expression {
         use zkcir::ast::{Ident, Value, BinOp, Wire};
         use zkcir::ast::Expression;
@@ -1047,30 +1040,6 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
                 .collect()
         })
         .collect();
-
-        // // connect all the equalities
-        // for (i, cellset) in self.cellsets_vect.iter().enumerate() {
-        //     match cellset {
-        //         CellSet::Equality(v) {
-                    
-        //         },
-        //         _ => { }
-        //     }
-        // }
-
-        
-
-    
-        // return out_edges.clone()
-        // .iter()
-        // .map(|inner_vec| {
-        //     inner_vec
-        //         .iter()
-        //         .map(|&(usize_val, _)| usize_val)
-        //         .collect()
-        // })
-        // .collect();
-
     }
 
     fn build_default(&self) -> Vec<Vec<usize>> {
@@ -1917,6 +1886,7 @@ impl<F: Field + Ord> MockProver<F> {
             v
         }));
 
+        prover.build_graph();
         Ok(prover)
     }
 
