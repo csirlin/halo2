@@ -621,11 +621,11 @@ pub trait PrintGraph<F: Field> {
     fn output(&self, topological_order: Vec<usize>);
 
     /// zkcir ast expression builder - helper function for output
-    fn build_zkcir_expression(&self, exp: &AbsExpression<F>) -> zkcir::ast::Expression;
+    fn build_zkcir_expression(&self, exp: &AbsExpression<F>, i_map: &HashMap<(usize, usize), usize>, f_map: &HashMap<(usize, usize), usize>) -> zkcir::ast::Expression;
 
     /// zkcir ast equality builder - helper function for output
-    fn build_equality(&self, cells: &Vec<Cell>, pos: usize) -> zkcir::ast::Expression;
-    // === NOT IN USE === //
+    fn build_equality(&self, cells: &Vec<Cell>, pos: usize, i_map: &HashMap<(usize, usize), usize>, f_map: &HashMap<(usize, usize), usize>) -> zkcir::ast::Expression;
+        // === NOT IN USE === //
     
     // constructs the full graph that grows from a single instance cell. for 
     // circuits with just one instance assignment, this is the only thing 
@@ -760,6 +760,14 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
         let mut cir = CirBuilder::new();
         cir.num_wires(self.usable_rows.end as u64 * (self.fixed.len() + self.advice.len() + self.instance.len()) as u64);
  
+
+        // counters and trackers used to name variables
+        let mut i_index = 0usize;
+        let mut f_index = 0usize;
+        let mut i_map: HashMap<(usize, usize), usize> = HashMap::new();
+        let mut f_map: HashMap<(usize, usize), usize> = HashMap::new();
+
+
         // print the instance cells (public inputs): Stmt::Local(Ident::String("public_input_col_row"), Expr::Ident::VirtualWire(wire!(instance, row r, column col, value v)))
         for (i, instance_col) in self.instance.iter().enumerate() {
             for (j, instance_cell) in instance_col.iter().enumerate() {
@@ -767,7 +775,7 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
                     InstanceValue::Assigned(val) => {
                         cir.add_stmt(
                             Stmt::Local(
-                                Ident::String(format!("public_input_{}_{}", i, j)), 
+                                Ident::String(format!("public_input_{}", i_index)), 
                                 Expression::Ident(
                                     Ident::Wire(
                                         Wire{ 
@@ -779,19 +787,21 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
                                 ) 
                             )
                         );
+                        i_map.insert((i, j), i_index);
+                        i_index += 1;
                     },
                     _ => { }
                 }
             }
         }
 
-        // print all the fixed/advice cells that only appear in a single cellset (means it's not reused anywhere)
+        // print all the fixed cells that appear in one or more cellsets
         for (i, fixed_col) in self.tracker_fixed.iter().enumerate() {
             for (j, fixed_cell_cellsets) in fixed_col.iter().enumerate() {
-                if fixed_cell_cellsets.len() == 1 {
+                if fixed_cell_cellsets.len() >= 1 {
                     cir.add_stmt(
                         Stmt::Local(
-                            Ident::String(format!("fixed_cell_{}_{}", i, j)), 
+                            Ident::String(format!("fixed_cell_{}", f_index)), 
                             zkcir::ast::Expression::Ident(
                                 Ident::Wire (
                                     Wire { 
@@ -803,15 +813,21 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
                             ) 
                         )
                     );
+                    f_map.insert((i, j), f_index);
+                    f_index += 1;
                 }
             }
         }
-        for (i, advice_col) in self.tracker_advice.iter().enumerate() {
+
+        // hold off on declaring advice cells ahead of time. there's no telling
+        // what is a private input and what's an intermediate computation
+        /*for (i, advice_col) in self.tracker_advice.iter().enumerate() {
             for (j, advice_cell_cellsets) in advice_col.iter().enumerate() {
                 if advice_cell_cellsets.len() == 1 {
                     cir.add_stmt(
                         Stmt::Local (
-                            Ident::String (format!("fixed_cell_{}_{}", i, j)), 
+                            // TODO: print as a wire!(row, col, val) instead
+                            Ident::String (format!("advice_cell_{}_{}", i, j)), 
                             zkcir::ast::Expression::Ident(
                                 Ident::Wire(
                                     Wire { 
@@ -825,7 +841,7 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
                     );
                 }
             }
-        }
+        }*/
 
         // insert expressions in order of topological order: csvect[to[0]], csvect[to[1]], ...
             // if simple_expr: let <out> = <expr>: Stmt::Local(Ident::String("type_col_row") = Expr::...)
@@ -837,15 +853,25 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
                     // make an expr of equals
                     cir.add_stmt(
                         Stmt::Verify (
-                            self.build_equality(v, 0)
+                            self.build_equality(v, 0, &i_map, &f_map)
                         )
                     );
                 },
                 CellSet::SimpleExpr(_, exp, out) => {
                     cir.add_stmt(
                         Stmt::Local(
-                            Ident::String (format!("{:#?}", out)),
-                            self.build_zkcir_expression(exp)
+                            match out {
+                                Cell::Advice(c, r) => {
+                                    Ident::Wire( Wire { row: *r, column: *c, value: Some(Value::U64(0))})
+                                },
+                                Cell::Fixed(c, r) => {
+                                    Ident::String(format!("fixed_cell_{}", f_map.get(&(*c, *r)).unwrap()))
+                                },
+                                Cell::Instance(c, r) => {
+                                    Ident::String(format!("public_input_{}", i_map.get(&(*c, *r)).unwrap()))
+                                }
+                            },
+                            self.build_zkcir_expression(exp, &i_map, &f_map)
                         )
                     );
                 },
@@ -854,7 +880,7 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
                         cir.add_stmt(
                             Stmt::Verify (
                                 Expression::BinaryOperator {
-                                    lhs: Box::new(self.build_zkcir_expression(exp)),
+                                    lhs: Box::new(self.build_zkcir_expression(exp, &i_map, &f_map)),
                                     binop: BinOp::Equal,
                                     rhs: Box::new(Expression::Value(Value::U64(0)))
                                 }
@@ -879,7 +905,7 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
     }
     
     // build a zkcir::ast::Expression from an AbsExpression
-    fn build_zkcir_expression(&self, exp: &AbsExpression<F>) -> zkcir::ast::Expression {
+    fn build_zkcir_expression(&self, exp: &AbsExpression<F>, i_map: &HashMap<(usize, usize), usize>, f_map: &HashMap<(usize, usize), usize>) -> zkcir::ast::Expression {
         use zkcir::ast::{Ident, Value, BinOp, Wire};
         use zkcir::ast::Expression;
         match exp {
@@ -894,7 +920,7 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
                 let CellValue::Assigned(val) = self.fixed[*c][*r] else {
                     panic!("cell in AbsExpression not assigned");
                 };
-                Expression::Ident(Ident::Wire( Wire { row: *r, column: *c, value: Some(Value::U64(0))}))
+                Expression::Ident(Ident::String(format!("fixed_cell_{}", f_map.get(&(*c, *r)).unwrap())))
             },
             AbsExpression::Advice(c, r) => {
                 let CellValue::Assigned(val) = self.advice[*c][*r] else {
@@ -906,7 +932,7 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
                 let InstanceValue::Assigned(val) = self.instance[*c][*r] else {
                     panic!("cell in AbsExpression not assigned");
                 };
-                Expression::Ident(Ident::Wire( Wire { row: *r, column: *c, value: Some(Value::U64(0))}))
+                Expression::Ident(Ident::String(format!("public_input_{}", i_map.get(&(*c, *r)).unwrap())))
             },
             // TODO: add UniOP (neg)
             AbsExpression::Negated(boxed) => {
@@ -914,25 +940,25 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
                 Expression::BinaryOperator { 
                     lhs: Box::new(Expression::Value(Value::U64(0))),
                     binop: BinOp::Subtract, 
-                    rhs: Box::new(self.build_zkcir_expression(exp)) 
+                    rhs: Box::new(self.build_zkcir_expression(exp, i_map, f_map)) 
                 }
             }
             AbsExpression::Sum(boxed_left, boxed_right) => {
                 let left = &**boxed_left;
                 let right = &**boxed_right;
                 Expression::BinaryOperator { 
-                    lhs: Box::new(self.build_zkcir_expression(left)), 
+                    lhs: Box::new(self.build_zkcir_expression(left, i_map, f_map)), 
                     binop: BinOp::Add, 
-                    rhs: Box::new(self.build_zkcir_expression(right)) 
+                    rhs: Box::new(self.build_zkcir_expression(right, i_map, f_map)) 
                 }
             }
             AbsExpression::Product(boxed_left, boxed_right) => {
                 let left = &**boxed_left;
                 let right = &**boxed_right;
                 Expression::BinaryOperator { 
-                    lhs: Box::new(self.build_zkcir_expression(left)), 
+                    lhs: Box::new(self.build_zkcir_expression(left, i_map, f_map)), 
                     binop: BinOp::Multiply, 
-                    rhs: Box::new(self.build_zkcir_expression(right)) 
+                    rhs: Box::new(self.build_zkcir_expression(right, i_map, f_map)) 
                 }
             }
             // TODO: let value hold a string to represent F
@@ -941,57 +967,44 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
                 Expression::BinaryOperator { 
                     lhs: Box::new(Expression::Value(Value::U64(0))),
                     binop: BinOp::Multiply, 
-                    rhs: Box::new(self.build_zkcir_expression(exp)) 
+                    rhs: Box::new(self.build_zkcir_expression(exp, i_map, f_map)) 
                 }
             }
         }
     }
 
-    fn build_equality(&self, cells: &Vec<Cell>, pos: usize) -> zkcir::ast::Expression {
+    fn build_equality(&self, cells: &Vec<Cell>, pos: usize, i_map: &HashMap<(usize, usize), usize>, f_map: &HashMap<(usize, usize), usize>) -> zkcir::ast::Expression {
         use zkcir::ast::{Ident, Value, BinOp, Wire};
         use zkcir::ast::Expression;
-        if cells.len() - pos < 2 {
-            panic!("less than two cells remaining in equality vector passed to MockProver.build_equality");
-        }
-        else {
-            //TODO: modify Ident::Wire to hold wire type (advice/fixed/inst)
-            let wire1 = match cells[pos] {
-                | Cell::Advice(c, r) 
-                | Cell::Fixed(c, r) 
-                | Cell::Instance(c, r)=> {
-                    Wire { 
-                        row: r, 
-                        column: c, 
+
+        let idents: Vec<Ident> = cells.iter().map(|cell| {
+            match cell {
+                Cell::Advice(c, r) => {
+                    Ident::Wire( Wire {
+                        row: *r,
+                        column: *c,
                         value: Some(Value::U64(0))
-                    }
-                }
-            };
-            if cells.len() - pos == 2 {
-                let wire2 = match cells[pos+1] {
-                    | Cell::Advice(c, r) 
-                    | Cell::Fixed(c, r) 
-                    | Cell::Instance(c, r)=> {
-                        Wire { 
-                            row: r, 
-                            column: c, 
-                            value: Some(Value::U64(0))
-                        }
-                    }
-                };
-                Expression::BinaryOperator {
-                    lhs: Box::new(Expression::Ident(Ident::Wire(wire1))),
-                    binop: BinOp::Equal,
-                    rhs: Box::new(Expression::Ident(Ident::Wire(wire2)))
-                }
+                    })
+                },
+                Cell::Fixed(c, r) => {
+                    Ident::String(format!("fixed_cell_{}", f_map.get(&(*c, *r)).unwrap()))
+                },
+                Cell::Instance(c, r) => {
+                    Ident::String(format!("public_input_{}", f_map.get(&(*c, *r)).unwrap()))
+                },
             }
-            else {
-                Expression::BinaryOperator { 
-                    lhs: Box::new(Expression::Ident(Ident::Wire(wire1))),
-                    binop: BinOp::Equal,
-                    rhs: Box::new(self.build_equality(cells, pos+1))
-                }
+        }).collect();
+
+        let mut zkcir_expr = Expression::Ident(idents[0].to_owned()); 
+        for i in 1..idents.len() {
+            zkcir_expr = Expression::BinaryOperator { 
+                lhs: Box::new(zkcir_expr), 
+                binop: BinOp::Equal, 
+                rhs: Box::new(Expression::Ident(idents[i].to_owned()))
             }
         }
+
+        return zkcir_expr;
     }
 
     fn build_simple(&self) -> Vec<Vec<usize>> {
