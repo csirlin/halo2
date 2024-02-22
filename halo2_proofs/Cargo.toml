@@ -53,6 +53,8 @@ rand = "0.8"
 tracing = "0.1"
 blake2b_simd = "1"
 maybe-rayon = {version = "0.1.0", default-features = false}
+chrono = "0.4"
+zkcir = { git = "https://github.com/chriscerie/zkcir.git", branch = "main" }
 
 # Developer tooling dependencies
 plotters = { version = "0.3.0", default-features = false, optional = true }
