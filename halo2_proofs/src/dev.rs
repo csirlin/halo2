@@ -1146,6 +1146,7 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
             }
         }
 
+        edges.reverse();
         edges
 
     }
@@ -1228,8 +1229,6 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
         if exprs.len() != 1 {
             return (false, None, None);
         }
-
-        println!("exprs[0] = {:#?}", exprs[0]);
 
         match &exprs[0] {
             AbsExpression::Sum(boxed1, boxed2) => {
