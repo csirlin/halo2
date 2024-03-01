@@ -2,6 +2,7 @@
 extern crate alloc;
 
 use alloc::string::String;
+use chrono::Datelike;
 use chrono::Timelike;
 use zkcir::ast::Ident;
 use std::cmp::max;
@@ -11,7 +12,6 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::fmt;
-use std::fmt::format;
 use std::fs;
 use std::hash::Hasher;
 use std::iter;
@@ -620,7 +620,7 @@ pub trait PrintGraph<F: Field> {
     fn is_simple_expr(&self, exprs: &Vec<AbsExpression<F>>) -> (bool, Option<AbsExpression<F>>, Option<Cell>);
 
     ///output as Chris' AST
-    fn output(&self, topological_order: Vec<usize>, combine_equalities: bool);
+    fn output(&self, topological_order: &Vec<usize>, simple: bool, combine_equalities: bool);
 
     /// zkcir ast expression builder - helper function for output
     fn build_zkcir_expression(&self, exp: &AbsExpression<F>, a_map: &Vec<Vec<Ident>>, i_map: &Vec<Vec<Ident>>, f_map: &Vec<Vec<Ident>>) -> zkcir::ast::Expression;
@@ -724,6 +724,7 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
 
         // get appropriate adjList
         let edges = if simple {
+            // self.build_default()
             self.build_simple()
         }
         else {
@@ -744,7 +745,8 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
                _ => true 
             }).map(|elem| *elem).collect();
 
-            self.output(order_no_instance, true);
+            self.output(&order_no_instance, simple, true);
+            self.output(&order_no_instance, simple, false);
 
         }
         else {
@@ -755,7 +757,7 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
     }
 
     // generate a zkcir::Cir containing all the circuit's data
-    fn output(&self, topological_order: Vec<usize>, combine_equalities: bool) {
+    fn output(&self, topological_order: &Vec<usize>, simple: bool, combine_equalities: bool) {
         use zkcir::ast::{BinOp, Stmt, Expression, Value, Wire};
         use zkcir::ir::CirBuilder;
         let mut cir = CirBuilder::new();
@@ -766,7 +768,7 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
         println!("here");
         // generate identifiers for each cell:
         let mut advice_idents: Vec<Vec<Ident>> = self.advice.iter().enumerate().map(|(c_index, col)| {
-            col.iter().enumerate().map(|(r_index, cell)| {
+            col.iter().enumerate().map(|(r_index, _cell)| {
                 Ident::Wire( 
                     Wire {
                         row: r_index,
@@ -779,7 +781,7 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
         println!("here2");
 
         let mut fixed_idents: Vec<Vec<Ident>> = self.fixed.iter().enumerate().map(|(c_index, col)| {
-            col.iter().enumerate().map(|(r_index, cell)| {
+            col.iter().enumerate().map(|(r_index, _cell)| {
                 Ident::Wire( 
                     Wire {
                         row: r_index,
@@ -792,7 +794,7 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
         println!("here3");
 
         let mut instance_idents: Vec<Vec<Ident>> = self.instance.iter().enumerate().map(|(c_index, col)| {
-            col.iter().enumerate().map(|(r_index, cell)| {
+            col.iter().enumerate().map(|(r_index, _cell)| {
                 Ident::Wire( 
                     Wire {
                         row: r_index,
@@ -858,7 +860,7 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
 
         //if combine_equalities, print all equalities at the top and update the custom equality identifier
         if combine_equalities {
-            for (index, cellset) in self.cellsets_vect.iter().enumerate() {
+            for (_index, cellset) in self.cellsets_vect.iter().enumerate() {
                 match cellset {
                     CellSet::Equality(v) => {
                         for cell in v {
@@ -874,7 +876,6 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
                                 }
                             };
                             let equality_ident = Ident::String(format!("equality_{}", e_index));
-                            e_index += 1;
                             cir.add_stmt(
                                 Stmt::Local(
                                     equality_ident.clone(),
@@ -883,6 +884,7 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
                             );
                             *wire_ident = equality_ident;
                         }
+                        e_index += 1;
                     },
                     _ => { }
                 }
@@ -921,7 +923,7 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
             // if equality: assert!(eq1 == eq2 == eq3 ...) - Stmt::Verify(Expr::Binop(..., Equal, ...))
             // if expr: assert!(<expr>)
         for index in topological_order {
-            match &self.cellsets_vect[index] {
+            match &self.cellsets_vect[*index] {
                 CellSet::Equality(v) => {
                     // make an expr of equals
                     if !combine_equalities {
@@ -950,7 +952,7 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
                         )
                     );
                 },
-                CellSet::Expr(v, exps) => {
+                CellSet::Expr(_v, exps) => {
                     for exp in exps {
                         cir.add_stmt(
                             Stmt::Verify (
@@ -972,7 +974,17 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
         // build and output zkcir::Cir object to file named with timestamp
         let output = cir.build();
         let local_time = Local::now();
-        let filename = format!("output/output_{}-{}-{}", local_time.hour(), local_time.minute(), local_time.second());
+        let equality_string = 
+            if combine_equalities { "filtereq".to_string() }
+            else { "witheq".to_string() };
+        let simple_string = 
+            if simple { "simple".to_string() }
+            else { "default".to_string() };
+        let filename = format!("output/{}-{}-{}_{}-{}-{}_{}_{}", 
+            local_time.month(), local_time.day(), local_time.year(), 
+            local_time.hour(), local_time.minute(), local_time.second(), 
+            simple_string, equality_string
+        );
         if let Err(err) = fs::write(format!("{}{}", filename, ".cir"), output.to_code_ir()) {
             eprintln!("Error generating cir file \"{}\": {}", format!("{}{}", filename, ".cir"), err);
         }
@@ -983,30 +995,30 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
     
     // build a zkcir::ast::Expression from an AbsExpression
     fn build_zkcir_expression(&self, exp: &AbsExpression<F>, a_map: &Vec<Vec<Ident>>, i_map: &Vec<Vec<Ident>>, f_map: &Vec<Vec<Ident>>) -> zkcir::ast::Expression {
-        use zkcir::ast::{Ident, Value, BinOp, Wire};
+        use zkcir::ast::{Value, BinOp};
         use zkcir::ast::Expression;
         match exp {
             AbsExpression::Constant(c) => {
                 Expression::Ident(Ident::String(format!("{:#?}", c)))
             },
-            AbsExpression::Selector(s) => {
+            AbsExpression::Selector(_s) => {
                 panic!("encountered selector in MockProver.build_zkcir_expression()")
             },
             // TODO: Let Value hold a string to fit a debug print of F
             AbsExpression::Fixed(c, r) => {
-                let CellValue::Assigned(val) = self.fixed[*c][*r] else {
+                let CellValue::Assigned(_val) = self.fixed[*c][*r] else {
                     panic!("cell in AbsExpression not assigned");
                 };
                 Expression::Ident(f_map[*c][*r].clone())
             },
             AbsExpression::Advice(c, r) => {
-                let CellValue::Assigned(val) = self.advice[*c][*r] else {
+                let CellValue::Assigned(_val) = self.advice[*c][*r] else {
                     panic!("cell in AbsExpression not assigned");
                 };
                 Expression::Ident(a_map[*c][*r].clone())
             },
             AbsExpression::Instance(c, r) => {
-                let InstanceValue::Assigned(val) = self.instance[*c][*r] else {
+                let InstanceValue::Assigned(_val) = self.instance[*c][*r] else {
                     panic!("cell in AbsExpression not assigned");
                 };
                 Expression::Ident(i_map[*c][*r].clone())
@@ -1039,7 +1051,7 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
                 }
             }
             // TODO: let value hold a string to represent F
-            AbsExpression::Scaled(boxed, scale) => {
+            AbsExpression::Scaled(boxed, _scale) => {
                 let subexp = &**boxed;
                 Expression::BinaryOperator { 
                     lhs: Box::new(Expression::Value(Value::U64(0))),
@@ -1050,8 +1062,8 @@ impl<F: Field> PrintGraph<F> for MockProver<F> {
         }
     }
 
-    fn build_equality(&self, cells: &Vec<Cell>, pos: usize, a_map: &Vec<Vec<Ident>>, i_map: &Vec<Vec<Ident>>, f_map: &Vec<Vec<Ident>>) -> zkcir::ast::Expression {
-        use zkcir::ast::{Ident, Value, BinOp, Wire};
+    fn build_equality(&self, cells: &Vec<Cell>, _pos: usize, a_map: &Vec<Vec<Ident>>, i_map: &Vec<Vec<Ident>>, f_map: &Vec<Vec<Ident>>) -> zkcir::ast::Expression {
+        use zkcir::ast::BinOp;
         use zkcir::ast::Expression;
 
         let idents: Vec<Ident> = cells.iter().map(|cell| {
@@ -1871,6 +1883,12 @@ impl<F: Field> Assignment<F> for MockProver<F> {
 }
 
 impl<F: Field + Ord> MockProver<F> {
+
+    
+
+
+
+
     /// Runs a synthetic keygen-and-prove operation on the given circuit, collecting data
     /// about the constraints and their assignments.
     pub fn run<ConcreteCircuit: Circuit<F>>(
