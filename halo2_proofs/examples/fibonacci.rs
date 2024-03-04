@@ -183,12 +183,34 @@ impl<F: Field> Circuit<F> for MyCircuit<F> {
     }
 }
 
+fn main () {
+    let k = 4;
+
+    let a = Fp::from(1); // F[0]
+    let b = Fp::from(1); // F[1]
+    let out = Fp::from(55); // F[9]
+
+    let circuit = MyCircuit(PhantomData);
+
+    let mut public_input = vec![a, b, out];
+
+    let mut prover = MockProver::run(k, &circuit, vec![public_input.clone()]).unwrap();
+    let json = format!("{:#?}", prover);
+
+    prover.assert_satisfied();
+
+    // public_input[2] += Fp::one();
+    // let _prover = MockProver::run(k, &circuit, vec![public_input]).unwrap();
+
+    
+}
+
 #[cfg(test)]
 mod tests {
     use std::marker::PhantomData;
 
     use super::MyCircuit;
-    use halo2_proofs::{dev::MockProver, pasta::Fp};
+    use halo2_proofs::{dev::{MockProver, PrintGraph}, pasta::Fp};
 
     #[test]
     fn fibonacci_example1() {
@@ -202,7 +224,7 @@ mod tests {
 
         let mut public_input = vec![a, b, out];
 
-        let prover = MockProver::run(k, &circuit, vec![public_input.clone()]).unwrap();
+        let mut prover = MockProver::run(k, &circuit, vec![public_input.clone()]).unwrap();
         prover.assert_satisfied();
 
         public_input[2] += Fp::one();
