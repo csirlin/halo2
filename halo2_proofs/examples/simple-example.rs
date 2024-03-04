@@ -1,8 +1,8 @@
-use std::marker::PhantomData;
+use std::{marker::PhantomData, thread::sleep};
 
 use group::ff::Field;
 use halo2_proofs::{
-    circuit::{AssignedCell, Chip, Layouter, Region, SimpleFloorPlanner, Value}, dev::{MockProver, PrintGraph}, plonk::{Advice, Circuit, Column, ConstraintSystem, Error, Expression, Fixed, Instance, Selector}, poly::Rotation
+    circuit::{AssignedCell, Chip, Layouter, Region, SimpleFloorPlanner, Value}, dev::MockProver, plonk::{Advice, Circuit, Column, ConstraintSystem, Error, Expression, Fixed, Instance, Selector}, poly::Rotation
 };
 use pasta_curves::Fp;
 
@@ -308,6 +308,7 @@ impl<F: Field> Circuit<F> for MyCircuit<F> {
         let field_chip = FieldChip::<F>::construct(config);
 
         // Load our private values into the circuit.
+        // println!("self.a = {:#?}", self.a);
         let a = field_chip.load_private(layouter.namespace(|| "load a"), self.a)?;
         let b = field_chip.load_private(layouter.namespace(|| "load b"), self.b)?;
         
@@ -328,15 +329,15 @@ impl<F: Field> Circuit<F> for MyCircuit<F> {
         //     absq = ab^2
         //     c    = constant*absq
         
-        println!("a = {:#?}", a);
-        println!("b = {:#?}", b);
-        println!("constant = {:#?}", constant);
+        // println!("a = {:#?}", a);
+        // println!("b = {:#?}", b);
+        // println!("constant = {:#?}", constant);
         let ab = field_chip.mul(layouter.namespace(|| "a * b"), a, b)?;
-        println!("ab = {:#?}", ab);
+        // println!("ab = {:#?}", ab);
         let absq = field_chip.mul(layouter.namespace(|| "ab * ab"), ab.clone(), ab)?;
-        println!("absq = {:#?}", absq);
+        // println!("absq = {:#?}", absq);
         let c = field_chip.mul(layouter.namespace(|| "constant * absq"), constant, absq)?;
-        println!("c = {:#?}", c);
+        // println!("c = {:#?}", c);
 
         
 
@@ -374,6 +375,9 @@ fn main() {
     // Given the correct public input, our circuit will verify.
     let prover = MockProver::run(k, &circuit, vec![public_inputs.clone()]).unwrap();
     assert_eq!(prover.verify(), Ok(()));
+    // sleep(std::time::Duration::from_secs(2));
+    // let empty_circuit = circuit.without_witnesses();
+    // let empty_prover = MockProver::run(k, &empty_circuit, vec![public_inputs.clone()]).unwrap();
     
     // print_class(prover);
 
