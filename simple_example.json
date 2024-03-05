@@ -1,0 +1,1384 @@
+// simple_example.json
+// debug print from simple_example.rs
+
+// obtained from
+"let prover = MockProver::run(k, &circuit, vec![public_inputs]).unwrap();"
+"println!("{:#?}", prover);"
+// and annotated to document understanding
+
+// circuit is a grid with fixed, advice, and instance columns
+// each column has k rows
+MockProver {
+
+    // not sure what the point of k is, unless it just ensures n is a power of 2
+    k: 4, 
+
+    // n = 2^k, number of rows
+    n: 16,
+    cs: ConstraintSystem {
+        num_fixed_columns: 2,
+        num_advice_columns: 2,
+        num_instance_columns: 1,
+
+        // number of selector COLUMNS
+        num_selectors: 1,
+
+        // i think this picks a selector column (in this case fixed[1])
+        selector_map: [
+            Column {
+                index: 1,
+                column_type: Fixed,
+            },
+        ],
+        gates: [
+
+            // gate seems to only query advice cells (and a selector which is in
+            // a fixed column)
+
+            // seems like gates are applied at every row. it's just selectors that disable them
+            Gate {
+
+                // name given by developer so we can't use it to infer the
+                // purpose of the gate
+                name: "mul", 
+
+                // not sure what this is
+                constraint_names: [
+                    "",
+                ],
+                polys: [
+
+                    // this expression AST represents the expression
+                    // s_mul * (lhs * rhs - out), which ensures that
+                    // out = lhs * rhs when s_mul != 0
+                    Product(
+                        Fixed { // s_mul
+                            query_index: 1,
+                            column_index: 1,
+                            rotation: Rotation(
+                                0,
+                            ),
+                        },
+                        Sum(
+                            Product(
+                                Advice { // lhs
+                                    query_index: 0,
+                                    column_index: 0,
+                                    rotation: Rotation(
+                                        0,
+                                    ),
+                                },
+                                Advice { // rhs
+                                    query_index: 1,
+                                    column_index: 1,
+                                    rotation: Rotation(
+                                        0,
+                                    ),
+                                },
+                            ),
+                            Negated(
+                                Advice { // out
+                                    query_index: 2,
+                                    column_index: 0,
+                                    rotation: Rotation(
+                                        1,
+                                    ),
+                                },
+                            ),
+                        ),
+                    ),
+                ],
+
+                queried_selectors: [ 
+                    Selector(
+                        0, // the index of the selector
+                        true, // is it a simple selector?
+                    ),
+                ],
+
+                // cells used in the gate's polynomial expression(s).
+                queried_cells: [ 
+
+                    // Advice[0] at rotation (row offset) 0
+                    VirtualCell {
+                        column: Column {
+                            index: 0,
+                            column_type: Advice,
+                        },
+                        rotation: Rotation(
+                            0,
+                        ),
+                    },
+
+                    // Advice[1] at rotation 0
+                    VirtualCell {
+                        column: Column {
+                            index: 1,
+                            column_type: Advice,
+                        },
+                        rotation: Rotation(
+                            0,
+                        ),
+                    },
+
+                    // Advice[0] at rotation 1
+                    VirtualCell {
+                        column: Column {
+                            index: 0,
+                            column_type: Advice,
+                        },
+                        rotation: Rotation(
+                            1,
+                        ),
+                    },
+                ],
+            },
+        ],
+
+        // the cells (advice columns w/ rotations) that were queried. probably
+        // holds the cells from the whole circuit but can't tell w/ only one
+        // gate
+        advice_queries: [ 
+            (
+                // same notation as above but no longer wrapped in a virtual
+                // cell. not sure why each one is in a tuple though... can each
+                // query hold multiple cells?
+                Column { 
+                    index: 0,
+                    column_type: Advice,
+                },
+                Rotation(
+                    0,
+                ),
+            ),
+            (
+                Column {
+                    index: 1,
+                    column_type: Advice,
+                },
+                Rotation(
+                    0,
+                ),
+            ),
+            (
+                Column {
+                    index: 0,
+                    column_type: Advice,
+                },
+                Rotation(
+                    1,
+                ),
+            ),
+        ],
+
+        // since n_a_q[0] = 2 and n_a_q[1] = 1, probably the num of
+        // queries from advice[0] and advice[1] respectively
+        num_advice_queries: [ 
+            2,
+            1,
+        ],
+
+        // same notation as above but for instance queries. this is circuit-wide
+        // i think because the gate didn't seem to query an instance column
+        instance_queries: [ 
+            (
+                Column {
+                    index: 0,
+                    column_type: Instance,
+                },
+                Rotation(
+                    0,
+                ),
+            ),
+        ],
+
+        // same notation as above but for fixed queries.
+        fixed_queries: [
+            (
+                Column {
+                    index: 0,
+                    column_type: Fixed,
+                },
+                Rotation(
+                    0,
+                ),
+            ),
+            (
+                Column {
+                    index: 1,
+                    column_type: Fixed,
+                },
+                Rotation(
+                    0,
+                ),
+            ),
+        ],
+
+        // seems to define all non-selector columns in one list
+        // (columns[0] = instance[0], columns[1] = fixed[0], 
+        // columns[2] = advice[0], and columns[3] = advice[1])
+        // notice fixed[1] (the selector column) is not here
+        permutation: Argument { 
+            columns: [
+                Column {
+                    index: 0,
+                    column_type: Instance,
+                },
+                Column {
+                    index: 0,
+                    column_type: Fixed,
+                },
+                Column {
+                    index: 0,
+                    column_type: Advice,
+                },
+                Column {
+                    index: 1,
+                    column_type: Advice,
+                },
+            ],
+        },
+
+        // not sure what this is...
+        lookups: [],
+
+        // not sure what this is. it seems like it's saying constants are in
+        // the column fixed[0]?
+        constants: [ 
+            Column {
+                index: 0,
+                column_type: Fixed,
+            },
+        ],
+
+        // something about polynomial degree. but i don't know what it does
+        minimum_degree: None,
+    },
+
+    // from Layouter<F>.assign_region()
+    regions: [
+        Region {
+
+            // name many not be unique
+            name: "load private", 
+
+            // columns in the region. in this case just Advice[0]
+            columns: { 
+                Column {
+                    index: 0,
+                    column_type: Advice,
+                },
+            },
+
+            // rows included are [start, end]. so in this case just row 0
+            rows: Some( 
+                (
+                    0,
+                    0,
+                ),
+            ),
+            enabled_selectors: {},
+
+            // cell is Advice[0] row 0. not sure if row is relative or absolute
+            // offset but it seems to align with the enabled columns and rows
+            cells: [ 
+                (
+                    Column {
+                        index: 0,
+                        column_type: Advice,
+                    },
+                    0,
+                ),
+            ],
+        },
+        Region {
+            name: "load private",
+            columns: {
+                Column {
+                    index: 0,
+                    column_type: Advice,
+                },
+            },
+            rows: Some(
+                (
+                    1,
+                    1,
+                ),
+            ),
+            enabled_selectors: {},
+            cells: [
+                (
+                    Column {
+                        index: 0,
+                        column_type: Advice,
+                    },
+                    1,
+                ),
+            ],
+        },
+        Region {
+            name: "load constant",
+            columns: {
+                Column {
+                    index: 0,
+                    column_type: Advice,
+                },
+            },
+            rows: Some(
+                (
+                    2,
+                    2,
+                ),
+            ),
+            enabled_selectors: {},
+            cells: [
+                (
+                    // column is advice[0]
+                    Column {
+                        index: 0,
+                        column_type: Advice,
+                    },
+
+                    // likely the absolute row
+                    2,
+                ),
+            ],
+        },
+        Region {
+            name: "mul",
+
+            // uses advice[0] and advice[1]
+            columns: {
+                Column {
+                    index: 0,
+                    column_type: Advice,
+                },
+                Column {
+                    index: 1,
+                    column_type: Advice,
+                },
+            },
+
+            // uses rows 3 and 4
+            rows: Some(
+                (
+                    3,
+                    4,
+                ),
+            ),
+
+            // it's still selector(0, true) so I'm not sure what 0 and true
+            // refer to. seems like it's in row 3 though. maybe 0 is the index
+            // of the selector column (when there's more than one sel column)
+            // and true could still mean that the selector is enabled.
+            // also, the selector appears to be outside the included columns
+            // since only advice columns are in the region and selectors are
+            // fixed columns 
+            enabled_selectors: { 
+                Selector(
+                    0,
+                    true,
+                ): [
+                    3,
+                ],
+            },
+
+            // seems like not all the cells in (Columns) x (Rows) are included, 
+            // since Cell(Advice[1], 4) is in the space but not included
+            cells: [
+                (
+                    Column {
+                        index: 0,
+                        column_type: Advice,
+                    },
+                    3,
+                ),
+                (
+                    Column {
+                        index: 1,
+                        column_type: Advice,
+                    },
+                    3,
+                ),
+                (
+                    Column {
+                        index: 0,
+                        column_type: Advice,
+                    },
+                    4,
+                ),
+            ],
+        },
+        Region {
+            name: "mul",
+            columns: {
+                Column {
+                    index: 0,
+                    column_type: Advice,
+                },
+                Column {
+                    index: 1,
+                    column_type: Advice,
+                },
+            },
+            rows: Some(
+                (
+                    5,
+                    6,
+                ),
+            ),
+            enabled_selectors: {
+                Selector(
+                    0,
+                    true,
+                ): [
+                    5,
+                ],
+            },
+            cells: [
+                (
+                    Column {
+                        index: 0,
+                        column_type: Advice,
+                    },
+                    5,
+                ),
+                (
+                    Column {
+                        index: 1,
+                        column_type: Advice,
+                    },
+                    5,
+                ),
+                (
+                    Column {
+                        index: 0,
+                        column_type: Advice,
+                    },
+                    6,
+                ),
+            ],
+        },
+        Region {
+            name: "mul",
+            columns: {
+                Column { 
+
+                    // does it matter that it's queried Ad[1], Ad[0] instead
+                    // of Ad[0], Ad[1]?
+                    index: 1,
+                    column_type: Advice,
+                },
+                Column {
+                    index: 0,
+                    column_type: Advice,
+                },
+            },
+            rows: Some(
+                (
+                    7,
+                    8,
+                ),
+            ),
+            enabled_selectors: {
+                Selector(
+                    0,
+                    true,
+                ): [
+                    7,
+                ],
+            },
+            cells: [
+                (
+                    Column {
+                        index: 0,
+                        column_type: Advice,
+                    },
+                    7,
+                ),
+                (
+                    Column {
+                        index: 1,
+                        column_type: Advice,
+                    },
+                    7,
+                ),
+                (
+                    Column {
+                        index: 0,
+                        column_type: Advice,
+                    },
+                    8,
+                ),
+            ],
+        },
+    ],
+
+    // don't think this matters
+    current_region: None, 
+
+    fixed: [
+        [ // presumably fixed[0]
+            Assigned(
+                0x000000000000000000000000000000000000000000000000000000000000cccc,
+            ), // 0th row
+            Unassigned, // 1st row
+            Unassigned, // etc
+            Unassigned,
+            Unassigned,
+            Unassigned,
+            Unassigned,
+            Unassigned,
+            Unassigned,
+            Unassigned,
+            Unassigned,
+            Unassigned,
+            Unassigned,
+            Unassigned,
+            Unassigned,
+            Unassigned,
+        ],
+        [ // presumably fixed[1]
+            Assigned(
+                0x0000000000000000000000000000000000000000000000000000000000000000,
+            ),
+            Assigned(
+                0x0000000000000000000000000000000000000000000000000000000000000000,
+            ),
+            Assigned(
+                0x0000000000000000000000000000000000000000000000000000000000000000,
+            ),
+            Assigned(
+                0x0000000000000000000000000000000000000000000000000000000000000001,
+            ),
+            Assigned(
+                0x0000000000000000000000000000000000000000000000000000000000000000,
+            ),
+            Assigned(
+                0x0000000000000000000000000000000000000000000000000000000000000001,
+            ),
+            Assigned(
+                0x0000000000000000000000000000000000000000000000000000000000000000,
+            ),
+            Assigned(
+                0x0000000000000000000000000000000000000000000000000000000000000001,
+            ),
+            Assigned(
+                0x0000000000000000000000000000000000000000000000000000000000000000,
+            ),
+            Assigned(
+                0x0000000000000000000000000000000000000000000000000000000000000000,
+            ),
+            Assigned(
+                0x0000000000000000000000000000000000000000000000000000000000000000,
+            ),
+            Assigned(
+                0x0000000000000000000000000000000000000000000000000000000000000000,
+            ),
+            Assigned(
+                0x0000000000000000000000000000000000000000000000000000000000000000,
+            ),
+            Assigned(
+                0x0000000000000000000000000000000000000000000000000000000000000000,
+            ),
+            Assigned(
+                0x0000000000000000000000000000000000000000000000000000000000000000,
+            ),
+            Assigned(
+                0x0000000000000000000000000000000000000000000000000000000000000000,
+            ),
+        ],
+    ],
+    advice: [
+        [ // advice[0]
+            Assigned(
+                0x000000000000000000000000000000000000000000000000000000000000aaaa,
+            ),
+            Assigned(
+                0x000000000000000000000000000000000000000000000000000000000000bbbb,
+            ),
+            Assigned(
+                0x000000000000000000000000000000000000000000000000000000000000cccc,
+            ),
+            Assigned(
+                0x000000000000000000000000000000000000000000000000000000000000aaaa,
+            ),
+            Assigned(
+                0x000000000000000000000000000000000000000000000000000000007d26d82e,
+            ),
+            Assigned(
+                0x000000000000000000000000000000000000000000000000000000007d26d82e,
+            ),
+            Assigned(
+                0x0000000000000000000000000000000000000000000000003d2ef501d035a844,
+            ),
+            Assigned(
+                0x000000000000000000000000000000000000000000000000000000000000cccc,
+            ),
+            Assigned(
+                0x0000000000000000000000000000000000000000000030f22ca8af5cacd84630, // c(ab)^2
+            ),
+            Unassigned,
+            Poison(
+                10,
+            ),
+            Poison(
+                11,
+            ),
+            Poison(
+                12,
+            ),
+            Poison(
+                13,
+            ),
+            Poison(
+                14,
+            ),
+            Poison(
+                15,
+            ),
+        ],
+        [ // advice[1]
+            Unassigned,
+            Unassigned,
+            Unassigned,
+            Assigned(
+                0x000000000000000000000000000000000000000000000000000000000000bbbb,
+            ),
+            Unassigned,
+            Assigned(
+                0x000000000000000000000000000000000000000000000000000000007d26d82e,
+            ),
+            Unassigned,
+            Assigned(
+                0x0000000000000000000000000000000000000000000000003d2ef501d035a844,
+            ),
+            Unassigned,
+            Unassigned,
+            Poison(
+                10,
+            ),
+            Poison(
+                11,
+            ),
+            Poison(
+                12,
+            ),
+            Poison(
+                13,
+            ),
+            Poison(
+                14,
+            ),
+            Poison(
+                15,
+            ),
+        ],
+    ],
+    instance: [ 
+        [ // instance[0]
+            Assigned( 
+                0x0000000000000000000000000000000000000000000030f22ca8af5cacd84630,
+            ),
+            Padding,
+            Padding,
+            Padding,
+            Padding,
+            Padding,
+            Padding,
+            Padding,
+            Padding,
+            Padding,
+            Padding,
+            Padding,
+            Padding,
+            Padding,
+            Padding,
+            Padding,
+        ],
+    ],
+
+    // selector true/false corresponds with fixed[1] values (f = 0, t = 1)
+    selectors: [ 
+        [
+            false,
+            false,
+            false,
+            true,
+            false,
+            true,
+            false,
+            true,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+        ],
+    ],
+    permutation: Assembly { 
+        
+        // maybe it excludes fixed[1] because that's for selectors?
+        columns: [ 
+            Column { // columns[0] = instance[0]
+                index: 0,
+                column_type: Instance,
+            },
+            Column { // columns[1] = fixed[0]
+                index: 0,
+                column_type: Fixed,
+            },
+            Column { // columns[2] = advice[0]
+                index: 0,
+                column_type: Advice,
+            },
+            Column { // columns[3] = advice[1]
+                index: 1,
+                column_type: Advice,
+            },
+        ],
+
+        // there are 4 lists of 16 maps.
+        // the cell at columns[i][j] maps to 
+        // columns[ mapping[i][j][0] ][ mapping[i][j][1] ] (see examples)
+        mapping: [ 
+            [ // mappings for column[0] = instance[0]
+                
+                // mapping for row 0 of column[0] (instance[0]): 
+                // row 8 of column[2] (advice[0]).
+                // so this enforces the equality instance[0][0] = advice[0][8]
+                ( 
+                    2, 
+                    8,
+                ),
+
+                // mapping for row 1 of column[0] (instance[0]):
+                // row 1 of column[0] (instance[0])
+                // so this enforces instance[0][0] = instance[0][0] which means
+                // the value here is not connected to that of any other cell.
+                ( 
+                    0,
+                    1,
+                ),
+                (
+                    0,
+                    2,
+                ),
+                (
+                    0,
+                    3,
+                ),
+                (
+                    0,
+                    4,
+                ),
+                (
+                    0,
+                    5,
+                ),
+                (
+                    0,
+                    6,
+                ),
+                (
+                    0,
+                    7,
+                ),
+                (
+                    0,
+                    8,
+                ),
+                (
+                    0,
+                    9,
+                ),
+                (
+                    0,
+                    10,
+                ),
+                (
+                    0,
+                    11,
+                ),
+                (
+                    0,
+                    12,
+                ),
+                (
+                    0,
+                    13,
+                ),
+                (
+                    0,
+                    14,
+                ),
+                (
+                    0,
+                    15,
+                ),
+            ],
+            [ // mappings for column[1] = fixed[0]
+                (
+                    2,
+                    2,
+                ),
+                (
+                    1,
+                    1,
+                ),
+                (
+                    1,
+                    2,
+                ),
+                (
+                    1,
+                    3,
+                ),
+                (
+                    1,
+                    4,
+                ),
+                (
+                    1,
+                    5,
+                ),
+                (
+                    1,
+                    6,
+                ),
+                (
+                    1,
+                    7,
+                ),
+                (
+                    1,
+                    8,
+                ),
+                (
+                    1,
+                    9,
+                ),
+                (
+                    1,
+                    10,
+                ),
+                (
+                    1,
+                    11,
+                ),
+                (
+                    1,
+                    12,
+                ),
+                (
+                    1,
+                    13,
+                ),
+                (
+                    1,
+                    14,
+                ),
+                (
+                    1,
+                    15,
+                ),
+            ],
+            [ // mappings for column[2] = advice[0]
+                (
+                    2,
+                    3,
+                ),
+                (
+                    3,
+                    3,
+                ),
+                (
+                    2,
+                    7,
+                ),
+                (
+                    2,
+                    0,
+                ),
+                (
+                    3,
+                    5,
+                ),
+                (
+                    2,
+                    4,
+                ),
+                (
+                    3,
+                    7,
+                ),
+                (
+                    1,
+                    0,
+                ),
+
+                // column[2][8] maps back to column[0][0], which forms a cycle.
+                // the cycle is more apparent for equalities of 3+ cells,
+                // where the mappings look like "x -> y -> z -> x"
+                (
+                    0,
+                    0,
+                ),
+                (
+                    2,
+                    9,
+                ),
+                (
+                    2,
+                    10,
+                ),
+                (
+                    2,
+                    11,
+                ),
+                (
+                    2,
+                    12,
+                ),
+                (
+                    2,
+                    13,
+                ),
+                (
+                    2,
+                    14,
+                ),
+                (
+                    2,
+                    15,
+                ),
+            ],
+            [ // mappings for column[3] = advice[1]
+                (
+                    3,
+                    0,
+                ),
+                (
+                    3,
+                    1,
+                ),
+                (
+                    3,
+                    2,
+                ),
+                (
+                    2,
+                    1,
+                ),
+                (
+                    3,
+                    4,
+                ),
+                (
+                    2,
+                    5,
+                ),
+                (
+                    3,
+                    6,
+                ),
+                (
+                    2,
+                    6,
+                ),
+                (
+                    3,
+                    8,
+                ),
+                (
+                    3,
+                    9,
+                ),
+                (
+                    3,
+                    10,
+                ),
+                (
+                    3,
+                    11,
+                ),
+                (
+                    3,
+                    12,
+                ),
+                (
+                    3,
+                    13,
+                ),
+                (
+                    3,
+                    14,
+                ),
+                (
+                    3,
+                    15,
+                ),
+            ],
+        ],
+
+        // auxillary mappings: instead of a cycle, each cell maps to a
+        // root. if 2 or more cells are equal, they all map to a common root.
+        // cells that map to themselves are roots, but they might just be their
+        // own root (no other cells maps to them)
+        // so if x = y = z, we have x -> x, y -> x, z -> x
+        aux: [ 
+            [
+                (
+                    2,
+                    8,
+                ),
+                (
+                    0,
+                    1,
+                ),
+                (
+                    0,
+                    2,
+                ),
+                (
+                    0,
+                    3,
+                ),
+                (
+                    0,
+                    4,
+                ),
+                (
+                    0,
+                    5,
+                ),
+                (
+                    0,
+                    6,
+                ),
+                (
+                    0,
+                    7,
+                ),
+                (
+                    0,
+                    8,
+                ),
+                (
+                    0,
+                    9,
+                ),
+                (
+                    0,
+                    10,
+                ),
+                (
+                    0,
+                    11,
+                ),
+                (
+                    0,
+                    12,
+                ),
+                (
+                    0,
+                    13,
+                ),
+                (
+                    0,
+                    14,
+                ),
+                (
+                    0,
+                    15,
+                ),
+            ],
+            [
+                (
+                    1,
+                    0,
+                ),
+                (
+                    1,
+                    1,
+                ),
+                (
+                    1,
+                    2,
+                ),
+                (
+                    1,
+                    3,
+                ),
+                (
+                    1,
+                    4,
+                ),
+                (
+                    1,
+                    5,
+                ),
+                (
+                    1,
+                    6,
+                ),
+                (
+                    1,
+                    7,
+                ),
+                (
+                    1,
+                    8,
+                ),
+                (
+                    1,
+                    9,
+                ),
+                (
+                    1,
+                    10,
+                ),
+                (
+                    1,
+                    11,
+                ),
+                (
+                    1,
+                    12,
+                ),
+                (
+                    1,
+                    13,
+                ),
+                (
+                    1,
+                    14,
+                ),
+                (
+                    1,
+                    15,
+                ),
+            ],
+            [
+                (
+                    2,
+                    3,
+                ),
+                (
+                    3,
+                    3,
+                ),
+                (
+                    1,
+                    0,
+                ),
+                (
+                    2,
+                    3,
+                ),
+                (
+                    2,
+                    5,
+                ),
+                (
+                    2,
+                    5,
+                ),
+                (
+                    3,
+                    7,
+                ),
+                (
+                    1,
+                    0,
+                ),
+                (
+                    2,
+                    8,
+                ),
+                (
+                    2,
+                    9,
+                ),
+                (
+                    2,
+                    10,
+                ),
+                (
+                    2,
+                    11,
+                ),
+                (
+                    2,
+                    12,
+                ),
+                (
+                    2,
+                    13,
+                ),
+                (
+                    2,
+                    14,
+                ),
+                (
+                    2,
+                    15,
+                ),
+            ],
+            [
+                (
+                    3,
+                    0,
+                ),
+                (
+                    3,
+                    1,
+                ),
+                (
+                    3,
+                    2,
+                ),
+                (
+                    3,
+                    3,
+                ),
+                (
+                    3,
+                    4,
+                ),
+                (
+                    2,
+                    5,
+                ),
+                (
+                    3,
+                    6,
+                ),
+                (
+                    3,
+                    7,
+                ),
+                (
+                    3,
+                    8,
+                ),
+                (
+                    3,
+                    9,
+                ),
+                (
+                    3,
+                    10,
+                ),
+                (
+                    3,
+                    11,
+                ),
+                (
+                    3,
+                    12,
+                ),
+                (
+                    3,
+                    13,
+                ),
+                (
+                    3,
+                    14,
+                ),
+                (
+                    3,
+                    15,
+                ),
+            ],
+        ],
+
+        // size[column][row] is only >1 if column[col][row] is a root
+        // in aux with a size >1. 
+        // size is 1 if it's a non-root (maps to another cell in aux) or it is a
+        // root but just a self-root
+        // so if x = y = z,      aux(x)  = x,      aux(y)  = x,      aux(z)  = x
+        //                      size(x)  = 3,     size(y)  = 1,     size(z)  = 1
+        //                  size(aux(x)) = 3, size(aux(y)) = 3, size(aux(z)) = 3
+        sizes: [ 
+            [
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+            ],
+            [
+                3,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+            ],
+            [
+                1,
+                1,
+                1,
+                2,
+                1,
+                3,
+                1,
+                1,
+                2,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+            ],
+            [
+                1,
+                1,
+                1,
+                2,
+                1,
+                1,
+                1,
+                2,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+            ],
+        ],
+    },
+
+    // not much to say here, but I guess [0, 9] is the valid row range
+    usable_rows: 0..10, 
+}

@@ -15,8 +15,8 @@ use crate::{
 
 #[derive(Debug)]
 pub struct Assembly {
-    columns: Vec<Column<Any>>,
-    pub(crate) mapping: Vec<Vec<(usize, usize)>>,
+    pub columns: Vec<Column<Any>>,
+    pub mapping: Vec<Vec<(usize, usize)>>,
     aux: Vec<Vec<(usize, usize)>>,
     sizes: Vec<Vec<usize>>,
 }

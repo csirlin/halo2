@@ -8,7 +8,7 @@ authors = [
     "Jack Grigg <jack@electriccoin.co>",
 ]
 edition = "2021"
-rust-version = "1.59"
+rust-version = "1.60"
 description = """
 Fast PLONK-based zero-knowledge proving system with no trusted setup
 """
@@ -49,9 +49,12 @@ ff = "0.13"
 group = "0.13"
 pasta_curves = "0.5"
 rand_core = { version = "0.6", default-features = false }
+rand = "0.8"
 tracing = "0.1"
 blake2b_simd = "1"
 maybe-rayon = {version = "0.1.0", default-features = false}
+chrono = "0.4"
+zkcir = { git = "https://github.com/chriscerie/zkcir.git", branch = "modifyWireStruct" }
 
 # Developer tooling dependencies
 plotters = { version = "0.3.0", default-features = false, optional = true }
@@ -76,12 +79,14 @@ tempfile = ">=3, <3.7.0" # tempfile 3.7.0 has MSRV 1.63
 getrandom = { version = "0.2", features = ["js"] }
 
 [features]
-default = ["batch", "multicore"]
+default = ["batch", "multicore", "dev-graph", "test-dev-graph"]
 multicore = ["maybe-rayon/threads"]
 dev-graph = ["plotters", "tabbycat"]
 test-dev-graph = [
     "dev-graph",
     "plotters/bitmap_backend",
+    "plotters/bitmap_encoder",
+    "plotters/ttf",
 ]
 gadget-traces = ["backtrace"]
 sanity-checks = []

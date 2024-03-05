@@ -23,8 +23,8 @@ pub trait ColumnType:
 /// A column with an index and type
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct Column<C: ColumnType> {
-    index: usize,
-    column_type: C,
+    pub(crate) index: usize,
+    pub(crate) column_type: C,
 }
 
 impl<C: ColumnType> Column<C> {
@@ -252,7 +252,7 @@ impl TryFrom<Column<Any>> for Column<Instance> {
 ///     Ok(())
 /// }
 /// ```
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Selector(pub(crate) usize, bool);
 
 impl Selector {
@@ -1227,6 +1227,12 @@ impl<F: Field> ConstraintSystem<F> {
             !polys.is_empty(),
             "Gates must contain at least one constraint."
         );
+
+        // println!("Printing polys in circuit.rs");
+        // for p in polys.iter() {
+        //     println!("{:#?}", p);
+        // }
+
 
         self.gates.push(Gate {
             name,

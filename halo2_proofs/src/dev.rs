@@ -1,18 +1,38 @@
 //! Tools for developing circuits.
+extern crate alloc;
 
+use alloc::string::String;
+use chrono::Datelike;
+use chrono::Timelike;
+// use crate::zkcir_test_util
+use zkcir::ast::Ident;
+use zkcir::ast::VirtualWire;
+use std::cmp::max;
+use std::cmp::min;
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::collections::VecDeque;
+use std::fmt;
+use std::fs;
+use std::hash::Hasher;
 use std::iter;
 use std::ops::{Add, Mul, Neg, Range};
-
 use ff::Field;
+use std::hash::Hash;
+use chrono::Local;
 
+use crate::plonk::AdviceQuery;
 use crate::plonk::Assigned;
+use crate::plonk::FixedQuery;
+use crate::plonk::InstanceQuery;
+use crate::plonk::VirtualCell;
+use crate::poly::Rotation;
 use crate::{
     circuit,
     plonk::{
         permutation, Advice, Any, Assignment, Circuit, Column, ConstraintSystem, Error, Expression,
-        Fixed, FloorPlanner, Instance, Selector,
+        Fixed, FloorPlanner, Instance, Selector, circuit::Gate
     },
 };
 
@@ -268,38 +288,406 @@ impl<F: Field> Mul<F> for Value<F> {
 ///         current_k,
 ///     } if current_k == 2,
 /// ));
-/// ```
+/// ``` 
+
+/// --- START OF CUSTOM FUNCTIONALITY --- ///
+
+/// A cell can be an advice, fixed, or instance cell
+#[derive(PartialEq, Eq, Hash, Clone, PartialOrd, Ord)]
+pub enum Cell {
+    /// (col, row) for an advice cell
+    Advice(usize, usize),
+
+    /// (col, row) for an fixed cell
+    Fixed(usize, usize),
+
+    /// (col, row) for a instance cell
+    Instance(usize, usize)
+}
+
+// Custom cell print format. Example: Advice col 1, row 2 is A1.2
+impl fmt::Debug for Cell {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Advice(arg0, arg1) => {
+                write!(f, "A{}.{}", arg0, arg1)
+            },
+            Self::Fixed(arg0, arg1) => {
+                write!(f, "F{}.{}", arg0, arg1)
+            },
+            Self::Instance(arg0, arg1) => {
+                 write!(f, "I{}.{}", arg0, arg1)
+            }
+        }
+    }
+}
+
+/// A cell set holds a collection from the circuit:
+/// a. An instance/public input cell
+/// b. An equality relation over multiple cells
+/// c. An expression on cells that must equal 0 for a valid circuit
+#[derive(PartialEq, Eq, Clone)]
+pub enum CellSet<F: Field> {
+    /// Instance cell with row and col
+    Instance(usize, usize),
+
+    /// List of cells assigned to be equal
+    Equality(Vec<Cell>),
+
+    /// List of cells in an expression, along with the expression
+    Expr(Vec<Cell>, Vec<AbsExpression<F>>),
+
+    /// Simple expression with inputs and a single output. Output = f(inputs)
+    /// List of cells, input expression, output cell
+    SimpleExpr(Vec<Cell>, AbsExpression<F>, Cell) 
+}
+
+// Custom cellset print format
+impl<F: Field> fmt::Debug for CellSet<F> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Instance(arg0, arg1) => {
+                write!(f, "Inst( I{}.{} )", arg0, arg1)
+            }
+            Self::Equality(v) => {
+                write!(f, "Eq( {:?} )", v)
+            }
+            Self::Expr(v, e) => {
+                write!(f, "Expr( {:?} : {:#?} )", v, e)
+            }
+            Self::SimpleExpr(_, e, out) => {
+                write!(f, "SimpleExpr( {:?} = {:#?} )", out, e)
+            }
+        }
+    }
+}
+
+// Custom hash function avoids hashing on the expression ast
+impl<F: Field> Hash for CellSet<F> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            CellSet::Instance(c, r) => {
+                state.write_u8(1);
+                c.hash(state);
+                r.hash(state);
+            }
+            CellSet::Equality(v, ) => {
+                state.write_u8(2);
+                v.hash(state);
+            }
+            CellSet::Expr(v, _) => {
+                state.write_u8(3);
+                v.hash(state);
+            }
+            CellSet::SimpleExpr(v, _, out) => {
+                state.write_u8(4);
+                v.hash(state);
+                out.hash(state);
+            }
+        }
+    }
+}
+
+// Custom full order: instance < equality < expr < simpleexpr. 
+// Within instance sets, sort by col number then row number
+// Within equality and expression sets, sort on the vec of Cells
+// Within simpleexprs, sort on the vec of Cells, then the output Cell
+impl<F: Field> Ord for CellSet<F> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match self {
+            CellSet::Instance(c, r) => {
+                match other {
+                    CellSet::Instance(co, ro) => {
+                        let vec_other = vec![co, ro];
+                        vec![c, r].cmp(&vec_other)
+                    },
+                    _ => Ordering::Less
+                }
+            },
+            CellSet::Equality(v) => {
+                match other {
+                    CellSet::Instance(_, _) => Ordering::Greater,
+                    CellSet::Equality(vo) => v.cmp(vo),
+                    _ => Ordering::Less,
+                }
+            },
+            CellSet::Expr(v, _) => {
+                match other {
+                    CellSet::Expr(vo, _) => v.cmp(vo),
+                    CellSet::SimpleExpr(_, _, _) => Ordering::Less,
+                    _ => Ordering::Greater,
+                }
+            }
+            CellSet::SimpleExpr(v, _, o) => {
+                match other {
+                    CellSet::SimpleExpr(vo, _, oo) => {
+                        let vcmp = v.cmp(&vo);
+                        if vcmp != Ordering::Equal {
+                            return o.cmp(&oo);
+                        }
+                        vcmp
+                    },
+                    _ => Ordering::Greater
+                }
+            }
+        }
+    }
+}
+
+// Custom partial order uses full order
+impl<F: Field> PartialOrd for CellSet<F> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Like the existing Expression enum in circuit.rs, except it uses my Cell enum
+/// so that the expressions reference absolute cell locations instead of offsets
+/// designed for gates that apply at every row
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AbsExpression<F: Field> {
+
+    /// Constant polynomial (number?)
+    Constant(F),
+
+    /// Virtual selector. Selector(usize, bool), where usize is the index of the
+    /// selector in the order it was added, and bool is true if it's a "simple
+    /// selector" which has some additional restrictions
+    Selector(Selector),
+
+    /// Fixed cell at (fixed col, row)
+    Fixed(usize, usize),
+
+    /// Advice (witness) cell at (advice col, row)
+    Advice(usize, usize),
+
+    /// Instance cell at (instance col, row)
+    Instance(usize, usize),
+
+    /// Negated polynomial
+    Negated(Box<AbsExpression<F>>),
+
+    /// Sum of two polynomials
+    Sum(Box<AbsExpression<F>>, Box<AbsExpression<F>>),
+
+    /// Product of two polynomials
+    Product(Box<AbsExpression<F>>, Box<AbsExpression<F>>),
+
+    /// Scaled polynomial
+    Scaled(Box<AbsExpression<F>>, F),
+}
+
+/// The MockProver object holds all the data about an instantiated circuit.
+/// Heavily extended for Logos functionality
 #[derive(Debug)]
 pub struct MockProver<F: Field> {
-    ///k
+    
+    /// Original MockProver members ///
+    
+    /// as far as I can tell this just ensures that n is a power of 2
     pub k: u32,
-    ///n
+    
+    /// Number of rows in the circuit, n = 2^k 
     pub n: u32,
-    ///cs
+
+    /// The ConstraintSystem holds a lot of pertinent info, notably the gates
+    /// and equality assignments
     pub cs: ConstraintSystem<F>,
 
     /// The regions in the circuit.
     pub regions: Vec<Region>,
-    /// The current region being assigned to. Will be `None` after the circuit has been
-    /// synthesized.
+
+    /// The current region being assigned to. Will be `None` after the circuit 
+    /// has been synthesized.
     pub current_region: Option<Region>,
 
     /// The fixed cells in the circuit, arranged as [column][row].
     pub fixed: Vec<Vec<CellValue<F>>>,
+
     /// The advice cells in the circuit, arranged as [column][row].
     pub advice: Vec<Vec<CellValue<F>>>,
+
     /// The instance cells in the circuit, arranged as [column][row].
     pub instance: Vec<Vec<InstanceValue<F>>>,
 
-    ///
+    /// Seems to hold the T/F values of each selector, although could be the
+    /// "simple" bool instead. Likely indexed [selector col][row]
     pub selectors: Vec<Vec<bool>>,
 
-    ///
+    /// Permutation holds several representations of cell equality constraints
     pub permutation: permutation::keygen::Assembly,
 
     /// A range of available rows for assignment and copies.
     pub usable_rows: Range<usize>,
+
+    /// Added MockProver members ///
+
+    /// Tracks what advice cells have been visited during initial DFS
+    pub visited_advice: Vec<Vec<bool>>,
+    
+    /// Tracks what fixed cells have been visited during initial DFS
+    pub visited_fixed: Vec<Vec<bool>>,
+    
+    /// Tracks what instance cells have been visited during initial DFS
+    pub visited_instance: Vec<Vec<bool>>,
+
+    /// Contains all the CellSets found in the circuit. HashSet to eliminate 
+    /// redundant entries
+    pub cellsets: HashSet<CellSet<F>>,
+
+    /// self.cellsets is transferred here and sorted after initial DFS so that
+    /// the CellSets can be sorted and referred to by index in later steps
+    pub cellsets_vect: Vec<CellSet<F>>,
+
+    /// Records the CellSets each advice cell is a part of
+    /// tracker_advice[col][row] is a list of indices in cellsets_vect
+    pub tracker_advice: Vec<Vec<Vec<usize>>>,
+    
+    /// Records the CellSets each instance cell is a part of. 
+    pub tracker_instance: Vec<Vec<Vec<usize>>>,
+    
+    /// Records the CellSets each fixed cell is a part of.
+    pub tracker_fixed: Vec<Vec<Vec<usize>>>,
+
 }
+
+/// PrintGraph has many functions that are used to construct a graph from the 
+// /// original MockProver object.
+// pub trait PrintGraph<F: Field> {
+//     /// build the edges graph when there's only simple expressions
+//     fn build_simple(&self) -> Vec<Vec<usize>>;
+
+//     /// build the edges graph in the general case where direction can't be inferred
+//     fn build_default(&self) -> Vec<Vec<usize>>;
+    
+//     /// Main function to build the graph. This is the entry point to do
+//     /// everything so far
+//     fn build_graph(&mut self);
+    
+//     /// Runs DFS to collect all CellSets in the circuit. Branches to all Cells
+//     /// in an equality or expression with the parameter cell. 
+//     fn dfs(&mut self, cell: Cell);
+
+//     /// given a Cell enum, return a Vec of Cell enums representing all the cells
+//     /// constrained to be equal to the input. return[0] is the original input 
+//     /// Cell, return[1...n] are the new ones, if any. If the cell isn't in
+//     /// permutations, will also return just the input
+//     fn get_cells_in_group(&self, cell: Cell) -> Vec<Cell>;
+    
+//     /// Given a cell, return all the gate instances it's a part of. The return
+//     /// include the gate's id, it's instantiated offset, and its non-zero
+//     /// expressions as AbsExprs
+//     fn get_gate_instances(&self, cell: Cell) -> Vec<(usize, i32, Vec<AbsExpression<F>>)>;
+
+//     /// Return a Vec of all the queried Cells in a gate instance, which is a 
+//     /// gate instance and offset
+//     fn get_cells_in_gate(&self, gate_ind: usize, offset: i32) -> Vec<Cell>;
+
+//     /// Look in self.permutation.columns for a Column with index equal to cell's
+//     /// column, and type equal to cell's type. Return the index of this Column
+//     /// if it exists, otherwise return -1 (Selector columns)
+//     fn get_perm_col(&self, cell: Cell) -> i32;
+
+//     /// Converts all Expressions in a gate instance into a Vec of AbsExpressions.
+//     /// If an expression simplifies to 0, it isn't included.
+//     fn get_abs_expressions(&self, gate: &Gate<F>, offset: i32) -> Vec<AbsExpression<F>>;
+
+//     /// Converts a halo2 Expression which uses VirtualCells into a Logos
+//     /// AbsExpression which represents expressions for gate instances, which use
+//     /// actual Cells that have a row instead of VirtualCells. Also recursively 
+//     /// simplifies the generated AbsExpr using Cell values. For example, 
+//     /// Prod(cell1, cell2) = cell2 if cell1 = 1
+//     fn get_abs_expression(&self, expr: &Expression<F>, offset: i32) -> AbsExpression<F>;
+
+//     /// Returns true if match_expr is a Constant equal to match_value or a Cell 
+//     /// that contains the value match_value
+//     fn evaluate_equal(&self, match_expr: &AbsExpression<F>, match_value: F) -> bool;
+
+//     /// Modify the the data structures necessary to perform one iteration of 
+//     /// BFS from the current cellset.
+//     fn bfs_manip(&self, tracker: &Vec<usize>, 
+//         visited_cellsets: &mut HashMap<usize, bool>, queue: &mut VecDeque<usize>, 
+//         edges: &mut Vec<Vec<usize>>, cellset_index: usize);
+
+//     /// print all the CellSets in sorted order. Only functional after calling 
+//     /// self.build_graph()
+//     fn print_cellsets(&self);
+
+//     /// print each tracking vector. Only functional after calling 
+//     /// self.build_graph()
+//     fn print_trackers(&self);
+
+//     /// if exprs has a single expression and it's "simple" (form is Sum(<inputs>, Neg(<output_cell)))
+//     /// return true, along with inputs and output_cell. otherwise return false and None for in and out
+//     fn is_simple_expr(&self, exprs: &Vec<AbsExpression<F>>) -> (bool, Option<AbsExpression<F>>, Option<Cell>);
+
+//     ///output as Chris' AST
+//     fn output(&self, topological_order: &Vec<usize>, simple: bool, combine_equalities: bool);
+
+//     /// zkcir ast expression builder - helper function for output
+//     fn build_zkcir_expression(&self, exp: &AbsExpression<F>, a_map: &Vec<Vec<Ident>>, i_map: &Vec<Vec<Ident>>, f_map: &Vec<Vec<Ident>>) -> zkcir::ast::Expression;
+
+//     /// zkcir ast equality builder - helper function for output
+//     fn build_equality(&self, cells: &Vec<Cell>, pos: usize, a_map: &Vec<Vec<Ident>>, i_map: &Vec<Vec<Ident>>, f_map: &Vec<Vec<Ident>>) -> zkcir::ast::Expression;
+//         // === NOT IN USE === //
+    
+//     // constructs the full graph that grows from a single instance cell. for 
+//     // circuits with just one instance assignment, this is the only thing 
+//     // build_graph will return
+//     // fn build_graph_from_instance(&self, col: usize, row: usize);
+// }
+
+fn topological_sort(adj_list: &HashMap<usize, Vec<usize>>) -> Option<Vec<usize>> {
+    let mut visited = HashSet::new();
+    let mut stack = Vec::new();
+    let mut result = Vec::new();
+
+    for &node in adj_list.keys() {
+        if !visited.contains(&node) {
+            if !dfs(node, adj_list, &mut visited, &mut stack) {
+                return None; // Graph contains a cycle
+            }
+        }
+    }
+
+    while let Some(node) = stack.pop() {
+        result.push(node);
+    }
+
+    Some(result)
+}
+
+fn dfs(
+    node: usize,
+    adj_list: &HashMap<usize, Vec<usize>>,
+    visited: &mut HashSet<usize>,
+    stack: &mut Vec<usize>,
+) -> bool {
+    if visited.contains(&node) {
+        return true;
+    }
+
+    visited.insert(node);
+
+    if let Some(neighbors) = adj_list.get(&node) {
+        for &neighbor in neighbors {
+            if !dfs(neighbor, adj_list, visited, stack) {
+                return false; // Graph contains a cycle
+            }
+        }
+    }
+
+    stack.push(node);
+    true
+}
+
+fn remove_duplicates<T: Eq + std::hash::Hash + Clone>(vec: Vec<T>) -> Vec<T> {
+    let set: HashSet<_> = vec.into_iter().collect();
+    set.into_iter().collect()
+}
+
+
+/// --- END OF CUSTOM FUNCTIONALITY --- ///
 
 ///
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -489,6 +877,1024 @@ impl<F: Field> Assignment<F> for MockProver<F> {
 }
 
 impl<F: Field + Ord> MockProver<F> {
+
+    /// print all the CellSets in sorted order. Only functional after calling 
+    /// self.build_graph()
+    fn print_cellsets(&self) {
+        println!("SORTED CELLSET: \n {:#?}", self.cellsets_vect);
+    }
+
+    /// print each tracking vector. Only functional after calling 
+    /// self.build_graph()
+    fn print_trackers(&self) {
+        println!("TRACKERS: \n");
+        println!("Advice: {:#?}", self.tracker_advice);
+        println!("Fixed: {:#?}", self.tracker_fixed);
+        println!("Instance: {:#?}", self.tracker_instance);
+    }
+
+    /// Main function to build the graph. This is the entry point to do
+    /// everything so far
+    pub fn build_graph(&mut self) {    
+        
+        // Iterate through all instance cells (public inputs) as DFS start 
+        // points because they are the public inputs, and the circuit's only 
+        // guarenteed external access points.
+        for (i, col) in self.instance.clone().iter().enumerate() {
+            for (j, cell) in col.iter().enumerate() {
+                
+                // if the instance cell is assigned, add it to self.cellsets
+                // and start a DFS. otherwise do nothing
+                if let InstanceValue::Assigned(_) = cell {
+                    self.cellsets.insert(CellSet::Instance(i, j));
+                    let icell = Cell::Instance(i, j);
+                    self.dfs(icell);
+                }
+            }
+        }
+        // println!("In build_graph, about to add cellsets to cellsets_vect");
+        // self.cellsets served its purpose by eliminating redundant 
+        // elements. Now use it to populate a vect and sort it
+        for elem in &self.cellsets {
+            self.cellsets_vect.push(elem.clone());
+        }
+        self.cellsets_vect.sort();
+
+        // Record which cellsets (indexed in self.cellsets_vect) each cell is a 
+        // member of in the self.tracker_... member variables
+        for (i, cs) in self.cellsets_vect.iter().enumerate() {
+            match cs {
+
+                // If it's an Instance CellSet, then add i to 
+                // tracker_instance[c][r]
+                CellSet::Instance(col, row) => {
+                    self.tracker_instance[*col][*row].push(i);
+                }
+                // Otherwise it's an Equality or Expr CellSet. So add each Cell 
+                // in the set to tracker_<type>[c][r]
+                CellSet::Equality(v)
+                | CellSet::Expr(v, _) 
+                | CellSet::SimpleExpr(v, _, _) => {
+                    for c in v.iter() {
+                        match c {
+                            Cell::Advice(col, row) => {
+                                self.tracker_advice[*col][*row].push(i);
+                            },
+                            Cell::Fixed(col, row) => {
+                                self.tracker_fixed[*col][*row].push(i);
+                            }
+                            Cell::Instance(col, row) => {
+                                self.tracker_instance[*col][*row].push(i);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut simple = true;
+        for cell in &self.cellsets_vect {
+            match cell {
+                CellSet::Expr(_, _) => {
+                    simple = false;
+                    break;
+                }
+                _ => { }
+            }
+        }
+
+        // get appropriate adjList
+        let edges = if simple {
+            // self.build_default()
+            self.build_simple()
+        }
+        else {
+            self.build_default()
+        };
+
+
+        let mut adj_list = HashMap::new();
+        for i in 0..edges.len() {
+            adj_list.insert(i, edges[i].clone());
+        }
+
+        if let Some(order) = topological_sort(&adj_list) {
+            // println!("Top order = {:#?}", order);
+
+            let order_no_instance: Vec<usize> = order.iter().filter(|num| match self.cellsets_vect[**num] {
+               CellSet::Instance(..) => false,
+               _ => true 
+            }).map(|elem| *elem).collect();
+
+            self.output(&order_no_instance, simple, true);
+            // self.output(&order_no_instance, simple, false);
+
+        }
+        else {
+            // println!("CYCLE IN GRAPH");
+            return;
+        }
+
+    }
+
+    // generate a zkcir::Cir containing all the circuit's data
+    fn output(&self, topological_order: &Vec<usize>, simple: bool, combine_equalities: bool) {
+        use zkcir::ast::{BinOp, Stmt, Expression, Value, Wire, Wiretype};
+        use zkcir::ir::CirBuilder;
+        let mut cir = CirBuilder::new();
+        cir.num_wires(self.usable_rows.end as u64 * (self.fixed.len() + self.advice.len() + self.instance.len()) as u64);
+ 
+        // counters and trackers used to name variables
+        let mut e_index: usize = 0;
+        // generate identifiers for each cell:
+        let mut advice_idents: Vec<Vec<Ident>> = self.advice.iter().enumerate().map(|(c_index, col)| {
+            col.iter().enumerate().map(|(r_index, _cell)| {
+                Ident::Wire( 
+                    Wire {
+                        row: r_index,
+                        column: c_index,
+                        value: Some(zkcir::ast::Value::U64(0)),
+                        wiretype: Wiretype::Private
+                    }
+                )
+            }).collect()
+        }).collect();
+
+        let mut fixed_idents: Vec<Vec<Ident>> = self.fixed.iter().enumerate().map(|(c_index, col)| {
+            col.iter().enumerate().map(|(r_index, _cell)| {
+                Ident::Wire( 
+                    Wire {
+                        row: r_index,
+                        column: c_index,
+                        value: Some(zkcir::ast::Value::U64(0)),
+                        wiretype: Wiretype::Constant
+                    }
+                )
+            }).collect()
+        }).collect();
+
+        let mut instance_idents: Vec<Vec<Ident>> = self.instance.iter().enumerate().map(|(c_index, col)| {
+            col.iter().enumerate().map(|(r_index, _cell)| {
+                Ident::Wire( 
+                    Wire {
+                        row: r_index,
+                        column: c_index,
+                        value: Some(zkcir::ast::Value::U64(0)),
+                        wiretype: Wiretype::Public
+                    }
+                )
+            }).collect()
+        }).collect();
+
+
+        // // print the instance cells (public inputs): Stmt::Local(Ident::String("public_input_col_row"), Expr::Ident::VirtualWire(wire!(instance, row r, column col, value v)))
+        // for (i, instance_col) in self.instance.iter().enumerate() {
+        //     for (j, instance_cell) in instance_col.iter().enumerate() {
+        //         match instance_cell {
+        //             InstanceValue::Assigned(val) => {
+        //                 cir.add_stmt(
+        //                     Stmt::Local(
+        //                         Ident::String(format!("public_input_{}", i_index)), 
+        //                         Expression::Ident(
+        //                             Ident::Wire(
+        //                                 Wire{ 
+        //                                     row: j, 
+        //                                     column: i, 
+        //                                     value: Some(zkcir::ast::Value::U64(0)) 
+        //                                 }
+        //                             )
+        //                         ) 
+        //                     )
+        //                 );
+        //                 i_map.insert((i, j), i_index);
+        //                 i_index += 1;
+        //             },
+        //             _ => { }
+        //         }
+        //     }
+        // }
+
+        // // print all the fixed cells that appear in one or more cellsets
+        // for (i, fixed_col) in self.tracker_fixed.iter().enumerate() {
+        //     for (j, fixed_cell_cellsets) in fixed_col.iter().enumerate() {
+        //         if fixed_cell_cellsets.len() >= 1 {
+        //             cir.add_stmt(
+        //                 Stmt::Local(
+        //                     Ident::String(format!("fixed_cell_{}", f_index)), 
+        //                     zkcir::ast::Expression::Ident(
+        //                         Ident::Wire (
+        //                             Wire { 
+        //                                 row: j, 
+        //                                 column: i, 
+        //                                 value: Some(zkcir::ast::Value::U64(0)) 
+        //                             }
+        //                         )
+        //                     ) 
+        //                 )
+        //             );
+        //             f_map.insert((i, j), f_index);
+        //             f_index += 1;
+        //         }
+        //     }
+        // }
+
+        //if combine_equalities, print all equalities at the top and update the custom equality identifier
+        if combine_equalities {
+            for (_index, cellset) in self.cellsets_vect.iter().enumerate() {
+                match cellset {
+                    CellSet::Equality(v) => {
+                        let equality_expr = self.build_equality(v, 0, &mut advice_idents, &instance_idents, &fixed_idents);
+                        // let equality_ident = Ident::String(format!("equality_{}", e_index)); //equality_i
+                        let equality_ident = Ident::VirtualWire(VirtualWire {index: e_index, value: Some(Value::U64(0))}); //virtual_wire!(...)
+                        for cell in v {
+                            let wire_ident: &mut Ident = match cell {
+                                Cell::Advice(c, r) => {
+                                    &mut advice_idents[*c][*r]
+                                },
+                                Cell::Fixed(c, r) => {
+                                    &mut fixed_idents[*c][*r]
+                                },
+                                Cell::Instance(c, r) => {
+                                    &mut instance_idents[*c][*r]
+                                }
+                            };                    
+                            *wire_ident = equality_ident.clone();
+                        }
+                        cir.add_stmt(
+                            Stmt::Local(
+                                equality_ident,
+                                equality_expr
+                            )
+                        );
+                        e_index += 1;
+                    },
+                    _ => { }
+                }
+            }
+        }
+
+
+        // hold off on declaring advice cells ahead of time. there's no telling
+        // what is a private input and what's an intermediate computation
+        /*for (i, advice_col) in self.tracker_advice.iter().enumerate() {
+            for (j, advice_cell_cellsets) in advice_col.iter().enumerate() {
+                if advice_cell_cellsets.len() == 1 {
+                    cir.add_stmt(
+                        Stmt::Local (
+                            // TODO: print as a wire!(row, col, val) instead
+                            Ident::String (format!("advice_cell_{}_{}", i, j)), 
+                            zkcir::ast::Expression::Ident(
+                                Ident::Wire(
+                                    Wire { 
+                                        row: j, 
+                                        column: i, 
+                                        value: Some(zkcir::ast::Value::U64(0))
+                                    }
+                                )
+                            ) 
+                        )
+                    );
+                }
+            }
+        }*/
+
+        // insert expressions in order of topological order: csvect[to[0]], csvect[to[1]], ...
+            // if simple_expr: let <out> = <expr>: Stmt::Local(Ident::String("type_col_row") = Expr::...)
+            // if equality: assert!(eq1 == eq2 == eq3 ...) - Stmt::Verify(Expr::Binop(..., Equal, ...))
+            // if expr: assert!(<expr>)
+        for index in topological_order {
+            match &self.cellsets_vect[*index] {
+                CellSet::Equality(v) => {
+                    // make an expr of equals
+                    if !combine_equalities {
+                        cir.add_stmt(
+                            Stmt::Verify (
+                                self.build_equality(v, 0, &advice_idents, &instance_idents, &fixed_idents)
+                            )
+                        );
+                    }
+                },
+                CellSet::SimpleExpr(_, exp, out) => {
+                    cir.add_stmt(
+                        Stmt::Local(
+                            match out {
+                                Cell::Advice(c, r) => {
+                                    advice_idents[*c][*r].clone()
+                                },
+                                Cell::Fixed(c, r) => {
+                                    fixed_idents[*c][*r].clone()
+                                },
+                                Cell::Instance(c, r) => {
+                                    instance_idents[*c][*r].clone()
+                                }
+                            },
+                            self.build_zkcir_expression(exp, &advice_idents, &instance_idents, &fixed_idents)
+                        )
+                    );
+                },
+                CellSet::Expr(_v, exps) => {
+                    for exp in exps {
+                        cir.add_stmt(
+                            Stmt::Verify (
+                                Expression::BinaryOperator {
+                                    lhs: Box::new(self.build_zkcir_expression(exp, &advice_idents, &instance_idents, &fixed_idents)),
+                                    binop: BinOp::Equal,
+                                    rhs: Box::new(Expression::Value(Value::U64(0)))
+                                }
+                            )
+                        );
+                    }
+                },
+                _ => { }
+            }
+        }
+
+
+        // build and output zkcir::Cir object to file named with timestamp
+        let output = cir.build();
+        // let local_time = Local::now();
+        // let equality_string = 
+        //     if combine_equalities { "filtereq".to_string() }
+        //     else { "witheq".to_string() };
+        // let simple_string = 
+        //     if simple { "simple".to_string() }
+        //     else { "default".to_string() };
+        // let filename = format!("output/{}-{}-{}_{}-{}-{}_{}_{}", 
+        //     local_time.month(), local_time.day(), local_time.year(), 
+        //     local_time.hour(), local_time.minute(), local_time.second(), 
+        //     simple_string, equality_string
+        // );
+        // if let Err(err) = fs::write(format!("{}{}", filename, ".cir"), output.to_code_ir()) {
+        //     eprintln!("Error generating cir file \"{}\": {}", format!("{}{}", filename, ".cir"), err);
+        // }
+        // if let Err(err) = fs::write(format!("{}{}", filename, ".json"), output.to_string().unwrap()) {
+        //     eprintln!("Error generating json file \"{}\": {}", format!("{}{}", filename, ".json"), err);
+        // }
+        // if let Err(err) = fs::write(format!("{}{}", filename, ".debug"), format!("{:#?}", self)) {
+        //     eprintln!("Error generating debug print file \"{}\": {}", format!("{}{}", filename, ".debug"), err);
+        // }
+
+        //print to console with formatting
+        if let Ok(output) = output.to_cli_string()
+        {
+            println!("{output:?}");
+        }
+    }
+    
+    /// build a zkcir::ast::Expression from an AbsExpression
+    fn build_zkcir_expression(&self, exp: &AbsExpression<F>, a_map: &Vec<Vec<Ident>>, i_map: &Vec<Vec<Ident>>, f_map: &Vec<Vec<Ident>>) -> zkcir::ast::Expression {
+        use zkcir::ast::{Value, BinOp};
+        use zkcir::ast::Expression;
+        match exp {
+            AbsExpression::Constant(c) => {
+                Expression::Ident(Ident::String(format!("{:#?}", c)))
+            },
+            AbsExpression::Selector(_s) => {
+                panic!("encountered selector in MockProver.build_zkcir_expression()")
+            },
+            // TODO: Let Value hold a string to fit a debug print of F
+            AbsExpression::Fixed(c, r) => {
+                let CellValue::Assigned(_val) = self.fixed[*c][*r] else {
+                    panic!("cell in AbsExpression not assigned");
+                };
+                Expression::Ident(f_map[*c][*r].clone())
+            },
+            AbsExpression::Advice(c, r) => {
+                let CellValue::Assigned(_val) = self.advice[*c][*r] else {
+                    panic!("cell in AbsExpression not assigned");
+                };
+                Expression::Ident(a_map[*c][*r].clone())
+            },
+            AbsExpression::Instance(c, r) => {
+                let InstanceValue::Assigned(_val) = self.instance[*c][*r] else {
+                    panic!("cell in AbsExpression not assigned");
+                };
+                Expression::Ident(i_map[*c][*r].clone())
+            },
+            // TODO: add UniOP (neg)
+            AbsExpression::Negated(boxed) => {
+                let subexp = &**boxed;
+                Expression::BinaryOperator { 
+                    lhs: Box::new(Expression::Value(Value::U64(0))),
+                    binop: BinOp::Subtract, 
+                    rhs: Box::new(self.build_zkcir_expression(subexp, a_map, i_map, f_map)) 
+                }
+            }
+            AbsExpression::Sum(boxed_left, boxed_right) => {
+                let left = &**boxed_left;
+                let right = &**boxed_right;
+                Expression::BinaryOperator { 
+                    lhs: Box::new(self.build_zkcir_expression(left, a_map, i_map, f_map)), 
+                    binop: BinOp::Add, 
+                    rhs: Box::new(self.build_zkcir_expression(right, a_map, i_map, f_map)) 
+                }
+            }
+            AbsExpression::Product(boxed_left, boxed_right) => {
+                let left = &**boxed_left;
+                let right = &**boxed_right;
+                Expression::BinaryOperator { 
+                    lhs: Box::new(self.build_zkcir_expression(left, a_map, i_map, f_map)), 
+                    binop: BinOp::Multiply, 
+                    rhs: Box::new(self.build_zkcir_expression(right, a_map, i_map, f_map)) 
+                }
+            }
+            // TODO: let value hold a string to represent F
+            AbsExpression::Scaled(boxed, _scale) => {
+                let subexp = &**boxed;
+                Expression::BinaryOperator { 
+                    lhs: Box::new(Expression::Value(Value::U64(0))),
+                    binop: BinOp::Multiply, 
+                    rhs: Box::new(self.build_zkcir_expression(subexp, a_map, i_map, f_map)) 
+                }
+            }
+        }
+    }
+
+    ///
+    fn build_equality(&self, cells: &Vec<Cell>, _pos: usize, a_map: &Vec<Vec<Ident>>, i_map: &Vec<Vec<Ident>>, f_map: &Vec<Vec<Ident>>) -> zkcir::ast::Expression {
+        use zkcir::ast::BinOp;
+        use zkcir::ast::Expression;
+
+        let idents: Vec<Ident> = cells.iter().map(|cell| {
+            match cell {
+                Cell::Advice(c, r) => {
+                    a_map[*c][*r].clone()
+                },
+                Cell::Fixed(c, r) => {
+                    f_map[*c][*r].clone()
+                },
+                Cell::Instance(c, r) => {
+                    i_map[*c][*r].clone()
+                },
+            }
+        }).collect();
+
+        let mut zkcir_expr = Expression::Ident(idents[0].to_owned()); 
+        for i in 1..idents.len() {
+            zkcir_expr = Expression::BinaryOperator { 
+                lhs: Box::new(zkcir_expr), 
+                binop: BinOp::Equal, 
+                rhs: Box::new(Expression::Ident(idents[i].to_owned()))
+            }
+        }
+
+        return zkcir_expr;
+    }
+
+    ///
+    fn build_simple(&self) -> Vec<Vec<usize>> {
+        let mut out_edges: Vec<Vec<(usize, &Cell)>> = vec![vec![]; self.cellsets_vect.len()];
+        let mut in_edges: Vec<Vec<(usize, &Cell)>> = vec![vec![]; self.cellsets_vect.len()];
+
+
+        // connect all the simpleexprs
+        for (i, cellset) in self.cellsets_vect.iter().enumerate() {
+            match cellset {
+                CellSet::SimpleExpr(v, _, out) => {
+                    for cell in v {
+                        let members = match cell {
+                            Cell::Advice(c, r) => &self.tracker_advice[*c][*r],
+                            Cell::Fixed(c, r) => &self.tracker_fixed[*c][*r],
+                            Cell::Instance(c, r) => &self.tracker_instance[*c][*r]
+                        };
+                        if cell == out {
+                            for member in members {
+                                if *member != i {
+                                    out_edges[i].push((*member, cell));
+                                    in_edges[*member].push((i, cell));
+                                }
+                            }
+                        }
+                        else {
+                            for member in members {
+                                if *member != i {
+                                    out_edges[*member].push((i, cell));
+                                    in_edges[i].push((*member, cell));
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        return out_edges
+        .iter()
+        .map(|inner_vec| {
+            inner_vec
+                .iter()
+                .map(|&(usize_val, _)| usize_val)
+                .collect()
+        })
+        .collect();
+    }
+
+    ///
+    fn build_default(&self) -> Vec<Vec<usize>> {
+        // queue contains cells that need to be visited in a BFS that starts 
+        // from the instance cells
+        let mut queue: VecDeque<usize> = VecDeque::new();
+
+        // visited_cellsets is a HashMap that records the visited state of each
+        // cell. Every cell is in one of 3 situations in relation to the HM:
+        //  1. not present - cell hasn't been seen. you can queue it and give it
+        //     an edge
+        //  2. present, false - cell is already in queue; you can't queue it but
+        //     you can give it an edge
+        //  3. present, true - cell has already been fully processed; you can't 
+        //     queue it or give it an edge
+        let mut visited_cellsets: HashMap<usize, bool> = HashMap::new();
+
+        // edges is an adjacency list that stores directed edges between 
+        // indexed CellSets.
+        let mut edges: Vec<Vec<usize>> = vec![vec![]; self.cellsets_vect.len()];
+
+        // Push Instance CellSets into queue. They start in state 2, so edges
+        // can be drawn to them but they can't be added to the queue again.
+        for i in 0..self.cellsets_vect.len() {
+            if let CellSet::Instance(_, _) = self.cellsets_vect[i] {
+                queue.push_back(i);
+                visited_cellsets.insert(i, false);
+            }
+        }
+
+        // BFS
+        while !queue.is_empty() {
+
+            // pop the front CellSet and set it to state 3
+            let front = queue.pop_front().unwrap();
+            *visited_cellsets.get_mut(&front).unwrap() = true;
+
+            // visit the CellSet's neighbors. Behavior depends on CellSet type
+            match &self.cellsets_vect[front] {
+
+                // Instance CellSet. This shouldn't be reached because all of 
+                // these should be queued at the start. But I guess just point
+                // to it and add it to the queue
+                CellSet::Instance(col, row) => {
+                    self.bfs_manip(
+                        &self.tracker_instance[*col][*row],
+                        &mut visited_cellsets,
+                        &mut queue,
+                        &mut edges,
+                        front
+                    );
+                },
+
+                // Equality and Expr CellSets: iterate through all the component
+                // cells, adding to the queue and adding edges as necessary
+                CellSet::Equality(cell_vect) 
+                | CellSet::Expr(cell_vect, _)
+                | CellSet::SimpleExpr(cell_vect, _, _) => {
+                    for cell in cell_vect {
+                        match cell {
+                            Cell::Advice(col, row) => {
+                                self.bfs_manip(
+                                    &self.tracker_advice[*col][*row],
+                                    &mut visited_cellsets,
+                                    &mut queue,
+                                    &mut edges,
+                                    front
+                                );
+                            },
+                            Cell::Fixed(col, row) => {
+                                self.bfs_manip(
+                                    &self.tracker_fixed[*col][*row],
+                                    &mut visited_cellsets,
+                                    &mut queue,
+                                    &mut edges,
+                                    front
+                                );
+                            },
+                            Cell::Instance(col, row) => {
+                                self.bfs_manip(
+                                    &self.tracker_instance[*col][*row],
+                                    &mut visited_cellsets,
+                                    &mut queue,
+                                    &mut edges,
+                                    front
+                                );
+                            }
+                        }
+                    }
+                },
+            }
+        }
+
+        edges.reverse();
+        edges
+
+    }
+
+    /// Modify the the data structures necessary to perform one iteration of 
+    /// BFS from the current cellset.
+    fn bfs_manip(&self, tracker: &Vec<usize>, 
+        visited_cellsets: &mut HashMap<usize, bool>, queue: &mut VecDeque<usize>, 
+        edges: &mut Vec<Vec<usize>>, cellset_index: usize) {
+        
+        for common_cellset in tracker {
+            if !visited_cellsets.contains_key(&common_cellset) || !visited_cellsets[&common_cellset] {
+                if !visited_cellsets.contains_key(&common_cellset) {
+                    queue.push_back(*common_cellset);
+                    visited_cellsets.insert(*common_cellset, false);
+                }
+                edges[cellset_index].push(*common_cellset);
+            }
+        }
+
+    }
+
+    /// Runs DFS to collect all CellSets in the circuit. Branches to all Cells
+    /// in an equality or expression with the parameter cell. 
+    fn dfs(&mut self, cell: Cell) {
+        
+        // Check if cell has been visited. If not, then mark it as visited in
+        // the apropriate self.visited_<type> vec
+        match cell {
+            Cell::Advice(c, r) => {
+                if self.visited_advice[c][r] { return }
+                self.visited_advice[c][r] = true;
+            },
+            Cell::Fixed(c, r) => {
+                if self.visited_fixed[c][r] { return }
+                self.visited_fixed[c][r] = true;
+            }
+            Cell::Instance(c, r) => {
+                if self.visited_instance[c][r] { return }
+                self.visited_instance[c][r] = true;
+            }
+        }
+
+        // Find all cells in an equality with the current cell and insert them
+        // in self.cellsets. Then run DFS on all the equal cells
+        let mut equalities = self.get_cells_in_group(cell.clone());
+        equalities.sort();
+        if equalities.len() > 1 {
+            self.cellsets.insert(CellSet::Equality(equalities.clone()));
+        }
+        for e in equalities.iter() {
+            self.dfs(e.clone());
+        }
+
+        // Find all gate instances that contain the current cell. Insert the
+        // gate instances into self.cellsets. Then run DFS on all the other 
+        // members of those instances.  
+        let gates = self.get_gate_instances(cell.clone());
+        for (gate_ind, offset, exprs) in gates {
+            let mut gate_members = self.get_cells_in_gate(gate_ind, offset);
+            gate_members.sort();
+            //let mut sorted_gms = gate_members.clone();
+            //if there's one expr and it's a simple expr (Sum(AbsExpr, Neg(Cell)))
+            let (is_simple, input, output) = self.is_simple_expr(&exprs);
+            if is_simple {
+                self.cellsets.insert(CellSet::SimpleExpr(gate_members.clone(), input.unwrap(), output.unwrap()));
+            }
+            else {
+                self.cellsets.insert(CellSet::Expr(gate_members.clone(), exprs));
+            }
+            for gm in gate_members.iter() {
+                self.dfs(gm.clone());
+            }
+        }
+    }
+
+    /// if exprs has a single expression and it's "simple" (form is Sum(<inputs>, Neg(<output_cell)))
+    /// return true, along with inputs and output_cell. otherwise return false and None for in and out
+    fn is_simple_expr(&self, exprs: &Vec<AbsExpression<F>>) -> (bool, Option<AbsExpression<F>>, Option<Cell>) {
+        if exprs.len() != 1 {
+            return (false, None, None);
+        }
+
+        match &exprs[0] {
+            AbsExpression::Sum(boxed1, boxed2) => {
+                let input = &**boxed1;
+                let rhs = &**boxed2;
+                match rhs {
+                    AbsExpression::Negated(boxed3) => {
+                        let output = &**boxed3;
+                        // println!("input = {:#?}, output = {:#?}", input, output);
+                        match output {
+                            AbsExpression::Advice(c, r) => {
+                                return (true, Some(input.clone()), Some(Cell::Advice(*c, *r)));
+                            },
+                            AbsExpression::Fixed(c, r) => {
+                                return (true, Some(input.clone()), Some(Cell::Fixed(*c, *r)));
+                            },
+                            AbsExpression::Instance(c, r) => {
+                                return (true, Some(input.clone()), Some(Cell::Instance(*c, *r)));
+                            },
+                            _ => {
+                                return (false, None, None);
+                            }
+                        }
+                    },
+                    _ => {
+                        return (false, None, None);
+                    }
+                }
+            },
+            _ => {
+                return (false, None, None);
+            }
+        }
+    }
+    
+    /// given a Cell enum, return a Vec of Cell enums representing all the cells
+    /// constrained to be equal to the input. return[0] is the original input 
+    /// Cell, return[1...n] are the new ones, if any. If the cell isn't in
+    /// permutations, will also return just the input
+    fn get_cells_in_group(&self, cell: Cell) -> Vec<Cell> {
+
+        let mut cells = vec![cell.clone()];
+
+        // Check if Cell::Type(col, row) maps to anything in 
+        // self.permutation.columns. If not, just return the 1-element Vec.
+        let perm_row = match cell {
+            Cell::Advice(_, r) => r,
+            Cell::Fixed(_, r) => r,
+            Cell::Instance(_, r) => r
+        };
+        let perm_col = self.get_perm_col(cell);
+        if perm_col == -1 {
+            return cells;
+        }
+        
+        // prepare to iterate through the equality mapping
+        let perm_col = perm_col as usize;
+        let mut cur_col = perm_col;
+        let mut cur_row = perm_row;
+        (cur_col, cur_row) = self.permutation.mapping[cur_col][cur_row];
+        
+        // The equality mapping is a loop, so go step-by-step until the start is
+        // reached, adding each new Cell to the return Vec.  
+        while (cur_col, cur_row) != (perm_col, perm_row) {
+            let Column {
+                index: c_ind, 
+                column_type: c_type
+            } = self.permutation.columns[cur_col];
+
+            let next_cell = match c_type {
+                Any::Fixed => Cell::Fixed(c_ind, cur_row),
+                Any::Advice => Cell::Advice(c_ind, cur_row),
+                Any::Instance => Cell::Instance(c_ind, cur_row)
+            };
+            cells.push(next_cell);
+            (cur_col, cur_row) = self.permutation.mapping[cur_col][cur_row];
+        }
+        
+        cells
+    }
+
+    /// Given a cell, return all the gate instances it's a part of. The return
+    /// include the gate's id, it's instantiated offset, and its non-zero
+    /// expressions as AbsExprs
+    fn get_gate_instances(&self, cell: Cell) -> Vec<(usize, i32, Vec<AbsExpression<F>>)> {
+        
+        // Get the halo2 Column associated with the cell, and extract its row
+        let (col_obj, row) = match cell {
+            Cell::Advice(c, r) => { 
+                (Column {index: c, column_type: Any::Advice}, r) 
+            },
+            Cell::Fixed(c, r) => { 
+                (Column {index: c, column_type: Any::Fixed}, r) 
+            },
+            Cell::Instance(c, r) => { 
+                (Column {index: c, column_type: Any::Instance}, r) 
+            } 
+        };  
+
+        // Build a list of gate instances
+        let mut gate_instances: Vec<(usize, i32, Vec<AbsExpression<F>>)> = vec![];
+        
+        // Loop over all gates
+        for (i, g) in self.cs.gates.iter().enumerate() {
+            
+            // Find the minimum and maximum rotations from 0 among all queried gates
+            let mut max_rot = i32::MIN;
+            let mut min_rot = i32::MAX;
+            for vc in g.queried_cells().iter() {
+                let Rotation(r) = vc.rotation;
+                min_rot = min(min_rot, r);
+                max_rot = max(max_rot, r);
+            }
+
+            // For each gate, go through all the queried cells and see if
+            // there's an offset that allows the parameter gate to correspond
+            // with the given queried cell. Also check that this offset doesn't
+            // mean any other VirtualCells are instantiated out of bounds, and
+            // that the gate is useful (has at least 1 non-zero AbsExpr).
+            for vc in g.queried_cells().iter() {
+                if vc.column == col_obj {
+
+                    // calculate offset given that the parameter cell is in a
+                    // given position. 
+                    let offset = (row as i32) - vc.rotation.0;
+
+                    // Ensure the min and max rotations are still in bounds
+                    if self.usable_rows.start as i32 <= offset + min_rot 
+                        && offset + max_rot < self.usable_rows.end as i32 {
+                        
+                        // Add the gate instance if it has non-zero AbsExprs
+                        let abs_exprs = self.get_abs_expressions(g, offset);
+                        if !abs_exprs.is_empty() {
+                            gate_instances.push((i, offset, abs_exprs));
+                        }
+                    }
+                }
+            }
+        }
+        
+        gate_instances
+    }
+
+    /// Converts all Expressions in a gate instance into a Vec of AbsExpressions.
+    /// If an expression simplifies to 0, it isn't included.
+    fn get_abs_expressions(&self, gate: &Gate<F>, offset: i32) -> Vec<AbsExpression<F>> {
+        
+        let mut abs_exprs = vec![];
+        for expr in gate.polynomials() {
+            let abs_expr = self.get_abs_expression(expr, offset);
+            if !self.evaluate_equal(&abs_expr, F::ZERO) {
+                abs_exprs.push(abs_expr);
+            }
+        }
+        
+        abs_exprs
+    }
+
+    /// Converts a halo2 Expression which uses VirtualCells into a Logos
+    /// AbsExpression which represents expressions for gate instances, which use
+    /// actual Cells that have a row instead of VirtualCells. Also recursively 
+    /// simplifies the generated AbsExpr using Cell values. For example, 
+    /// Prod(cell1, cell2) = cell2 if cell1 = 1
+    fn get_abs_expression(&self, expr: &Expression<F>, offset: i32) -> AbsExpression<F> {
+        match expr {
+
+            // Directly map Constants, Selectors, Negations, and Scales to AbsExprs
+            Expression::Constant(f) => {
+                AbsExpression::Constant(*f)
+            }
+            Expression::Selector(s) => {
+                AbsExpression::Selector(*s)
+            }
+            Expression::Negated(boxed_expr) => {
+                let abs_expr = self.get_abs_expression(&**boxed_expr, offset);
+                AbsExpression::Negated(Box::new(abs_expr))
+            }
+            Expression::Scaled(boxed_expr, scale) => {
+                AbsExpression::Scaled(Box::new(self.get_abs_expression(boxed_expr, offset)), *scale)
+            }
+
+            // Replace Fixed, Advice, and Instance relative cells with absolute
+            // rows using the desired offset
+            Expression::Fixed(FixedQuery {index: _, column_index, rotation} ) => {
+                AbsExpression::Fixed(*column_index, offset as usize + rotation.0 as usize)
+            }
+            Expression::Advice(AdviceQuery {index: _, column_index, rotation}) => {
+                AbsExpression::Advice(*column_index, offset as usize + rotation.0 as usize)
+            }
+            Expression::Instance(InstanceQuery {index: _, column_index, rotation}) => {
+                AbsExpression::Instance(*column_index, offset as usize + rotation.0 as usize)
+            }
+
+            // Recursively convert the two addends in a Sum, and simplify
+            Expression::Sum(boxed1, boxed2) => {
+                let abs_expr_1 = self.get_abs_expression(&**boxed1, offset);
+                let abs_expr_2 = self.get_abs_expression(&**boxed2, offset);
+                
+                // sum(0, x) = x
+                if self.evaluate_equal(&abs_expr_1, F::ZERO) {
+                    return abs_expr_2
+                }
+
+                // sum(x, 0) = x
+                if self.evaluate_equal(&abs_expr_2, F::ZERO) {
+                    return abs_expr_1
+                }
+
+                AbsExpression::Sum(Box::new(abs_expr_1), Box::new(abs_expr_2))
+            }
+
+            // Recursively convert the two factors in a Product, and simplify
+            Expression::Product(boxed1, boxed2) => {
+                let abs_expr_1 = self.get_abs_expression(&**boxed1, offset);
+                let abs_expr_2 = self.get_abs_expression(&**boxed2, offset);
+
+                // product(0, x) = 0
+                if self.evaluate_equal(&abs_expr_1, F::ZERO) {
+                    return abs_expr_1
+                }
+
+                // product(x, 0) = 0
+                if self.evaluate_equal(&abs_expr_2, F::ZERO) {
+                    return abs_expr_2
+                }
+
+                // product(1, x) = x
+                if self.evaluate_equal(&abs_expr_1, F::ONE) {
+                    return abs_expr_2
+                }
+
+                // product(x, 1) = x
+                if self.evaluate_equal(&abs_expr_2, F::ONE) {
+                    return abs_expr_1
+                }
+
+                AbsExpression::Product(Box::new(abs_expr_1), Box::new(abs_expr_2))
+            }
+        }
+    }
+
+    /// Returns true if match_expr is a Constant equal to match_value or a Cell 
+    /// that contains the value match_value
+    fn evaluate_equal(&self, match_expr: &AbsExpression<F>, match_value: F) -> bool {
+        match match_expr {
+            AbsExpression::Constant(c) => {
+                *c == match_value
+            } 
+            AbsExpression::Advice(c, r) => {
+                self.advice[*c][*r] == CellValue::Assigned(match_value)
+            }
+            AbsExpression::Fixed(c, r) => {
+                self.fixed[*c][*r] == CellValue::Assigned(match_value) 
+            }
+            AbsExpression::Instance(c, r) => {
+                self.instance[*c][*r] == InstanceValue::Assigned(match_value)
+            }
+            _ => false
+        }
+    }
+
+    /// Return a Vec of all the queried Cells in a gate instance, which is a 
+    /// gate instance and offset
+    fn get_cells_in_gate(&self, gate_ind: usize, offset: i32) -> Vec<Cell> {
+
+        let mut cells = HashSet::new();
+        
+        // iterate over all the VirtualCells in queried_cells()
+        for VirtualCell{
+                column: Column {
+                    index: vc_ind, 
+                    column_type: c_type
+                }, 
+                rotation: Rotation(r)
+            } in self.cs.gates[gate_ind].queried_cells() {
+            
+            // use the rotation (relative row offset) of the abstract gate added
+            // to the offset to get the VirtualCell's absolute position for this
+            // gate instance, and add it to the Vec
+            match c_type {
+                Any::Advice => {
+                    cells.insert(Cell::Advice(*vc_ind, offset as usize + *r as usize));
+                }
+                Any::Fixed => {
+                    cells.insert(Cell::Fixed(*vc_ind, offset as usize + *r as usize));
+                }
+                Any::Instance => {
+                    cells.insert(Cell::Instance(*vc_ind, offset as usize + *r as usize));
+                }
+            }
+        }
+        
+        Vec::from_iter(cells)
+    }
+    
+
+    /// Look in self.permutation.columns for a Column with index equal to cell's
+    /// column, and type equal to cell's type. Return the index of this Column
+    /// if it exists, otherwise return -1 (Selector columns)
+    fn get_perm_col(&self, cell: Cell) -> i32 {
+
+        // Go through each column in self.permuation.columns and see if it
+        // matches the column type and index of cell
+        for (pi, pcol) in self.permutation.columns.iter().enumerate() {
+            match cell {
+                Cell::Advice(c, _) => {
+                    if pcol.column_type == Any::Advice && pcol.index == c {
+                        return pi as i32;
+                    }
+                }
+                Cell::Fixed(c, _) => {
+                    if pcol.column_type == Any::Fixed && pcol.index == c {
+                        return pi as i32;
+                    }
+                }
+                Cell::Instance(c, _) => {
+                    if pcol.column_type == Any::Instance && pcol.index == c {
+                        return pi as i32;
+                    }
+                }
+            }
+        }
+
+        // returns -1 if the column isn't found
+        -1
+    }
+
+
+
+
     /// Runs a synthetic keygen-and-prove operation on the given circuit, collecting data
     /// about the constraints and their assignments.
     pub fn run<ConcreteCircuit: Circuit<F>>(
@@ -545,6 +1951,14 @@ impl<F: Field + Ord> MockProver<F> {
         ];
         let permutation = permutation::keygen::Assembly::new(n, &cs.permutation);
         let constants = cs.constants.clone();
+        
+        let visited_advice = vec![vec![false; n]; advice.len()];
+        let visited_fixed = vec![vec![false; n]; fixed.len()];
+        let visited_instance = vec![vec![false; n]; instance.len()];
+
+        let tracker_advice = vec![vec![vec![]; n]; advice.len()];
+        let tracker_fixed = vec![vec![vec![]; n]; fixed.len()];
+        let tracker_instance = vec![vec![vec![]; n]; instance.len()];
 
         let mut prover = MockProver {
             k,
@@ -558,10 +1972,19 @@ impl<F: Field + Ord> MockProver<F> {
             selectors,
             permutation,
             usable_rows: 0..usable_rows,
+            visited_advice,
+            visited_fixed,
+            visited_instance,
+            cellsets: HashSet::new(),
+            cellsets_vect: Vec::new(),
+            tracker_advice,
+            tracker_fixed,
+            tracker_instance,
         };
 
+        // println!("before synthesize in dev.rs");
         ConcreteCircuit::FloorPlanner::synthesize(&mut prover, circuit, config, constants)?;
-
+        // println!("after synthesize in dev.rs");
         let (cs, selector_polys) = prover.cs.compress_selectors(prover.selectors.clone());
         prover.cs = cs;
         prover.fixed.extend(selector_polys.into_iter().map(|poly| {
@@ -572,6 +1995,7 @@ impl<F: Field + Ord> MockProver<F> {
             v
         }));
 
+        prover.build_graph();
         Ok(prover)
     }
 

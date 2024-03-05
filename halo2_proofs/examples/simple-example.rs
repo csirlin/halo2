@@ -1,11 +1,10 @@
-use std::marker::PhantomData;
+use std::{marker::PhantomData, thread::sleep};
 
 use group::ff::Field;
 use halo2_proofs::{
-    circuit::{AssignedCell, Chip, Layouter, Region, SimpleFloorPlanner, Value},
-    plonk::{Advice, Circuit, Column, ConstraintSystem, Error, Fixed, Instance, Selector},
-    poly::Rotation,
+    circuit::{AssignedCell, Chip, Layouter, Region, SimpleFloorPlanner, Value}, dev::MockProver, plonk::{Advice, Circuit, Column, ConstraintSystem, Error, Expression, Fixed, Instance, Selector}, poly::Rotation
 };
+use pasta_curves::Fp;
 
 // ANCHOR: instructions
 trait NumericInstructions<F: Field>: Chip<F> {
@@ -113,8 +112,42 @@ impl<F: Field> FieldChip<F> {
             // has the following properties:
             // - When s_mul = 0, any value is allowed in lhs, rhs, and out.
             // - When s_mul != 0, this constrains lhs * rhs = out.
+            let one = F::ONE;
+            let four = one.double().double();
+            let five = four.add(F::ONE);
+            //vec![s_mul * (lhs.clone() * rhs - out * lhs - Expression::Constant(five)) * Expression::Constant(four)]
             vec![s_mul * (lhs * rhs - out)]
         });
+
+        // // Custom add gate for testing
+        // meta.create_gate("add", |meta| {
+        //     // To implement multiplication, we need three advice cells and a selector
+        //     // cell. We arrange them like so:
+        //     //
+        //     // | a0  | a1  | s_mul |
+        //     // |-----|-----|-------|
+        //     // | lhs | rhs | s_mul |
+        //     // | out |     |       |
+        //     //
+        //     // Gates may refer to any relative offsets we want, but each distinct
+        //     // offset adds a cost to the proof. The most common offsets are 0 (the
+        //     // current row), 1 (the next row), and -1 (the previous row), for which
+        //     // `Rotation` has specific constructors.
+        //     let lhs = meta.query_advice(advice[0], Rotation::cur());
+        //     let rhs = meta.query_advice(advice[1], Rotation::cur());
+        //     let out = meta.query_advice(advice[0], Rotation::next());
+        //     let s_mul = meta.query_selector(s_mul);
+
+        //     // Finally, we return the polynomial expressions that constrain this gate.
+        //     // For our multiplication gate, we only need a single polynomial constraint.
+        //     //
+        //     // The polynomial expressions returned from `create_gate` will be
+        //     // constrained by the proving system to equal zero. Our expression
+        //     // has the following properties:
+        //     // - When s_mul = 0, any value is allowed in lhs, rhs, and out.
+        //     // - When s_mul != 0, this constrains lhs * rhs = out.
+        //     vec![s_mul * (lhs.clone() - lhs)]
+        // });
 
         FieldConfig {
             advice,
@@ -142,7 +175,7 @@ impl<F: Field> Chip<F> for FieldChip<F> {
 
 // ANCHOR: instructions-impl
 /// A variable representing a number.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct Number<F: Field>(AssignedCell<F, F>);
 
 impl<F: Field> NumericInstructions<F> for FieldChip<F> {
@@ -271,11 +304,14 @@ impl<F: Field> Circuit<F> for MyCircuit<F> {
         config: Self::Config,
         mut layouter: impl Layouter<F>,
     ) -> Result<(), Error> {
+        // println!("In synthesize impl");
         let field_chip = FieldChip::<F>::construct(config);
 
         // Load our private values into the circuit.
+        // println!("self.a = {:#?}", self.a);
         let a = field_chip.load_private(layouter.namespace(|| "load a"), self.a)?;
         let b = field_chip.load_private(layouter.namespace(|| "load b"), self.b)?;
+        
 
         // Load the constant factor into the circuit.
         let constant =
@@ -292,9 +328,18 @@ impl<F: Field> Circuit<F> for MyCircuit<F> {
         //     ab   = a*b
         //     absq = ab^2
         //     c    = constant*absq
+        
+        // println!("a = {:#?}", a);
+        // println!("b = {:#?}", b);
+        // println!("constant = {:#?}", constant);
         let ab = field_chip.mul(layouter.namespace(|| "a * b"), a, b)?;
+        // println!("ab = {:#?}", ab);
         let absq = field_chip.mul(layouter.namespace(|| "ab * ab"), ab.clone(), ab)?;
+        // println!("absq = {:#?}", absq);
         let c = field_chip.mul(layouter.namespace(|| "constant * absq"), constant, absq)?;
+        // println!("c = {:#?}", c);
+
+        
 
         // Expose the result as a public input to the circuit.
         field_chip.expose_public(layouter.namespace(|| "expose c"), c, 0)
@@ -311,9 +356,9 @@ fn main() {
     let k = 4;
 
     // Prepare the private and public inputs to the circuit!
-    let constant = Fp::from(7);
-    let a = Fp::from(2);
-    let b = Fp::from(3);
+    let constant = Fp::from(12);
+    let a = Fp::from(10);
+    let b = Fp::from(11);
     let c = constant * a.square() * b.square();
 
     // Instantiate the circuit with the private inputs.
@@ -330,10 +375,102 @@ fn main() {
     // Given the correct public input, our circuit will verify.
     let prover = MockProver::run(k, &circuit, vec![public_inputs.clone()]).unwrap();
     assert_eq!(prover.verify(), Ok(()));
+    // sleep(std::time::Duration::from_secs(2));
+    // let empty_circuit = circuit.without_witnesses();
+    // let empty_prover = MockProver::run(k, &empty_circuit, vec![public_inputs.clone()]).unwrap();
+    
+    // print_class(prover);
 
     // If we try some other public input, the proof will fail!
     public_inputs[0] += Fp::one();
-    let prover = MockProver::run(k, &circuit, vec![public_inputs]).unwrap();
-    assert!(prover.verify().is_err());
+    // let mut prover = MockProver::run(k, &circuit, vec![public_inputs]).unwrap();
+    // assert!(prover.verify().is_err());
     // ANCHOR_END: test-circuit
+    
+    // CircuitLayout - check layout.png
+    use plotters::prelude::*;
+    let root = plotters::prelude::BitMapBackend::new("layout.png", (1024, 768)).into_drawing_area();
+    root.fill(&WHITE).unwrap();
+    let root = root
+        .titled("Example Circuit Layout", ("sans-serif", 60))
+        .unwrap();
+
+    halo2_proofs::dev::CircuitLayout::default()
+        // You can optionally render only a section of the circuit.
+        //.view_width(0..2)
+        //.view_height(0..16)
+        // You can hide labels, which can be useful with smaller areas.
+        .show_labels(true)
+        // Render the circuit onto your area!
+        // The first argument is the size parameter for the circuit.
+        .render(4, &circuit, &root)
+        .unwrap();
+
+    // Generate the DOT graph string.
+    let dot_string = halo2_proofs::dev::circuit_dot_graph(&circuit);
+
+    // Now you can either handle it in Rust, or just
+    // print it out to use with command-line tools.
+    // prover.print_cellsets();
+    // prover.print_trackers();
+    // prover.output();
+}
+
+
+
+
+
+
+
+fn print_class(prover: MockProver<Fp>) {
+    println!("FULL PROVER: \n {:#?}", prover);
+}
+
+fn print_data(prover: MockProver<Fp>) {
+    println!("\nTest prints");
+    println!("\tprover.n = {}", prover.n);
+    println!("\tprover.k = {}", prover.k);
+    println!(
+        "\tprover.cs.num_fixed_columns = {}",
+        prover.cs.num_fixed_columns
+    );
+    println!(
+        "\tprover.cs.num_advice_columns = {}",
+        prover.cs.num_advice_columns
+    );
+    println!(
+        "\tprover.cs.num_instance_columns = {}",
+        prover.cs.num_instance_columns
+    );
+    println!("\tprover.cs.num_selectors = {}", prover.cs.num_selectors);
+    println!("\tprover.cs.selector_map = {:?}", prover.cs.selector_map);
+    println!("\tprover.cs.gates = {:?}", prover.cs.gates);
+    println!(
+        "\tprover.cs.advice_queries = {:?}",
+        prover.cs.advice_queries
+    );
+    println!(
+        "\tprover.cs.num_advice_queries = {:?}",
+        prover.cs.num_advice_queries
+    );
+    println!(
+        "\tprover.cs.instance_queries = {:?}",
+        prover.cs.instance_queries
+    );
+    println!("\tprover.cs.fixed_queries = {:?}", prover.cs.fixed_queries);
+    println!("\tprover.cs.permutation = {:?}", prover.cs.permutation);
+    println!("\tprover.cs.lookups = {:?}", prover.cs.lookups);
+    println!("\tprover.cs.constants = {:?}", prover.cs.constants);
+    println!(
+        "\tprover.cs.minimum_degree = {:?}",
+        prover.cs.minimum_degree
+    );
+    println!("\tprover.regions = {:?}", prover.regions);
+    println!("\tprover.current_region = {:?}", prover.current_region);
+    println!("\tprover.fixed = {:?}", prover.fixed);
+    println!("\tprover.advice = {:?}", prover.advice);
+    println!("\tprover.instance = {:?}", prover.instance);
+    println!("\tprover.selectors = {:?}", prover.selectors);
+    println!("\tprover.permutation = {:?}", prover.permutation);
+    println!("\tprover.usable_rows = {:?}", prover.usable_rows);
 }

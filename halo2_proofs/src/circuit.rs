@@ -220,6 +220,7 @@ impl<'r, F: Field> Region<'r, F> {
         A: Fn() -> AR,
         AR: Into<String>,
     {
+        // println!("to = {}", to());
         let mut value = Value::unknown();
         let cell =
             self.region

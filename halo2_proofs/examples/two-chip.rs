@@ -200,7 +200,10 @@ impl<F: Field> AddInstructions<F> for AddChip<F> {
     ) -> Result<Self::Num, Error> {
         let config = self.config();
 
-        layouter.assign_region(
+        println!("a before: {:#?}", a.0);
+        println!("b before: {:#?}", b.0);
+
+        let ret = layouter.assign_region(
             || "add",
             |mut region: Region<'_, F>| {
                 // We only want to use a single addition gate in this region,
@@ -225,7 +228,15 @@ impl<F: Field> AddInstructions<F> for AddChip<F> {
                     .assign_advice(|| "lhs + rhs", config.advice[0], 1, || value)
                     .map(Number)
             },
-        )
+        );
+
+        // println!("a after: {:#?}", a.0);
+        // println!("b after: {:#?}", b.0);
+
+        // let num = ret.as_ref().unwrap();
+        //println!("sum after: {:#?}", num.0);
+
+        ret
     }
 }
 // ANCHOR END: add-instructions-impl
@@ -525,6 +536,7 @@ fn main() {
     // Given the correct public input, our circuit will verify.
     let prover = MockProver::run(k, &circuit, vec![public_inputs.clone()]).unwrap();
     assert_eq!(prover.verify(), Ok(()));
+    println!("FULL PROVER: \n {:#?}", prover);
 
     // If we try some other public input, the proof will fail!
     public_inputs[0] += Fp::one();
