@@ -261,7 +261,6 @@ where
 {
     type Output = Value<O>;
     fn add(self, rhs: Self) -> Self::Output {
-        println!("add");
         Value {
             inner: self.inner.zip(rhs.inner).map(|(a, b)| a + b),
         }
@@ -274,7 +273,6 @@ where
 {
     type Output = Value<O>;
     fn add(self, rhs: Self) -> Self::Output {
-        println!("add");
         Value {
             inner: self
                 .inner
@@ -291,7 +289,6 @@ where
 {
     type Output = Value<O>;
     fn add(self, rhs: Value<&V>) -> Self::Output {
-        println!("add");
         Value {
             inner: self.inner.zip(rhs.inner).map(|(a, b)| a + b),
         }
@@ -304,7 +301,6 @@ where
 {
     type Output = Value<O>;
     fn add(self, rhs: Value<V>) -> Self::Output {
-        println!("add");
         Value {
             inner: self.inner.zip(rhs.inner).map(|(a, b)| a + b),
         }
@@ -317,7 +313,6 @@ where
 {
     type Output = Value<O>;
     fn add(self, rhs: &Self) -> Self::Output {
-        println!("add");
         self + rhs.as_ref()
     }
 }
@@ -328,7 +323,6 @@ where
 {
     type Output = Value<O>;
     fn add(self, rhs: Value<V>) -> Self::Output {
-        println!("add");
         self.as_ref() + rhs
     }
 }
