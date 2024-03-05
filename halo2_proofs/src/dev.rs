@@ -4,6 +4,7 @@ extern crate alloc;
 use alloc::string::String;
 use chrono::Datelike;
 use chrono::Timelike;
+// use crate::zkcir_test_util
 use zkcir::ast::Ident;
 use zkcir::ast::VirtualWire;
 use std::cmp::max;
@@ -978,7 +979,7 @@ impl<F: Field + Ord> MockProver<F> {
         }
 
         if let Some(order) = topological_sort(&adj_list) {
-            println!("Top order = {:#?}", order);
+            // println!("Top order = {:#?}", order);
 
             let order_no_instance: Vec<usize> = order.iter().filter(|num| match self.cellsets_vect[**num] {
                CellSet::Instance(..) => false,
@@ -986,11 +987,11 @@ impl<F: Field + Ord> MockProver<F> {
             }).map(|elem| *elem).collect();
 
             self.output(&order_no_instance, simple, true);
-            self.output(&order_no_instance, simple, false);
+            // self.output(&order_no_instance, simple, false);
 
         }
         else {
-            println!("CYCLE IN GRAPH");
+            // println!("CYCLE IN GRAPH");
             return;
         }
 
@@ -1211,26 +1212,32 @@ impl<F: Field + Ord> MockProver<F> {
 
         // build and output zkcir::Cir object to file named with timestamp
         let output = cir.build();
-        let local_time = Local::now();
-        let equality_string = 
-            if combine_equalities { "filtereq".to_string() }
-            else { "witheq".to_string() };
-        let simple_string = 
-            if simple { "simple".to_string() }
-            else { "default".to_string() };
-        let filename = format!("output/{}-{}-{}_{}-{}-{}_{}_{}", 
-            local_time.month(), local_time.day(), local_time.year(), 
-            local_time.hour(), local_time.minute(), local_time.second(), 
-            simple_string, equality_string
-        );
-        if let Err(err) = fs::write(format!("{}{}", filename, ".cir"), output.to_code_ir()) {
-            eprintln!("Error generating cir file \"{}\": {}", format!("{}{}", filename, ".cir"), err);
-        }
-        if let Err(err) = fs::write(format!("{}{}", filename, ".json"), output.to_string().unwrap()) {
-            eprintln!("Error generating json file \"{}\": {}", format!("{}{}", filename, ".json"), err);
-        }
-        if let Err(err) = fs::write(format!("{}{}", filename, ".debug"), format!("{:#?}", self)) {
-            eprintln!("Error generating debug print file \"{}\": {}", format!("{}{}", filename, ".debug"), err);
+        // let local_time = Local::now();
+        // let equality_string = 
+        //     if combine_equalities { "filtereq".to_string() }
+        //     else { "witheq".to_string() };
+        // let simple_string = 
+        //     if simple { "simple".to_string() }
+        //     else { "default".to_string() };
+        // let filename = format!("output/{}-{}-{}_{}-{}-{}_{}_{}", 
+        //     local_time.month(), local_time.day(), local_time.year(), 
+        //     local_time.hour(), local_time.minute(), local_time.second(), 
+        //     simple_string, equality_string
+        // );
+        // if let Err(err) = fs::write(format!("{}{}", filename, ".cir"), output.to_code_ir()) {
+        //     eprintln!("Error generating cir file \"{}\": {}", format!("{}{}", filename, ".cir"), err);
+        // }
+        // if let Err(err) = fs::write(format!("{}{}", filename, ".json"), output.to_string().unwrap()) {
+        //     eprintln!("Error generating json file \"{}\": {}", format!("{}{}", filename, ".json"), err);
+        // }
+        // if let Err(err) = fs::write(format!("{}{}", filename, ".debug"), format!("{:#?}", self)) {
+        //     eprintln!("Error generating debug print file \"{}\": {}", format!("{}{}", filename, ".debug"), err);
+        // }
+
+        //print to console with formatting
+        if let Ok(output) = output.to_cli_string()
+        {
+            println!("{output:?}");
         }
     }
     
@@ -1975,9 +1982,9 @@ impl<F: Field + Ord> MockProver<F> {
             tracker_instance,
         };
 
-        println!("before synthesize in dev.rs");
+        // println!("before synthesize in dev.rs");
         ConcreteCircuit::FloorPlanner::synthesize(&mut prover, circuit, config, constants)?;
-        println!("after synthesize in dev.rs");
+        // println!("after synthesize in dev.rs");
         let (cs, selector_polys) = prover.cs.compress_selectors(prover.selectors.clone());
         prover.cs = cs;
         prover.fixed.extend(selector_polys.into_iter().map(|poly| {

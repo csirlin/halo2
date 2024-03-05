@@ -304,7 +304,7 @@ impl<F: Field> Circuit<F> for MyCircuit<F> {
         config: Self::Config,
         mut layouter: impl Layouter<F>,
     ) -> Result<(), Error> {
-        println!("In synthesize impl");
+        // println!("In synthesize impl");
         let field_chip = FieldChip::<F>::construct(config);
 
         // Load our private values into the circuit.
