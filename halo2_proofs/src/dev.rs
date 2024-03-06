@@ -1104,8 +1104,8 @@ impl<F: Field + Ord> MockProver<F> {
                 match cellset {
                     CellSet::Equality(v) => {
                         let equality_expr = self.build_equality(v, 0, &mut advice_idents, &instance_idents, &fixed_idents);
-                        // let equality_ident = Ident::String(format!("equality_{}", e_index)); //equality_i
-                        let equality_ident = Ident::VirtualWire(VirtualWire {index: e_index, value: Some(Value::U64(0))}); //virtual_wire!(...)
+                        let equality_ident = Ident::String(format!("value_{}", e_index)); //equality_i
+                        // let equality_ident = Ident::VirtualWire(VirtualWire {index: e_index, value: Some(Value::U64(0))}); //virtual_wire!(...)
                         for cell in v {
                             let wire_ident: &mut Ident = match cell {
                                 Cell::Advice(c, r) => {
