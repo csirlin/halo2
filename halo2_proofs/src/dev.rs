@@ -1008,12 +1008,22 @@ impl<F: Field + Ord> MockProver<F> {
         let mut e_index: usize = 0;
         // generate identifiers for each cell:
         let mut advice_idents: Vec<Vec<Ident>> = self.advice.iter().enumerate().map(|(c_index, col)| {
-            col.iter().enumerate().map(|(r_index, _cell)| {
+            col.iter().enumerate().map(|(r_index, cell)| {
+                let value: Option<Value> = match cell {
+                    CellValue::Unassigned => {None},
+                    CellValue::Assigned(field_val) => {
+                        let raw = format!("{:#?}", field_val);
+                        let without_prefix = raw.trim_start_matches("0x");
+                        let z = u64::from_str_radix(without_prefix, 16);
+                        Some(Value::U64(z.unwrap()))
+                    },
+                    CellValue::Poison(_) => {None},
+                };
                 Ident::Wire( 
                     Wire {
                         row: r_index,
                         column: c_index,
-                        value: Some(zkcir::ast::Value::U64(0)),
+                        value: value,
                         wiretype: Wiretype::Private
                     }
                 )
@@ -1021,12 +1031,22 @@ impl<F: Field + Ord> MockProver<F> {
         }).collect();
 
         let mut fixed_idents: Vec<Vec<Ident>> = self.fixed.iter().enumerate().map(|(c_index, col)| {
-            col.iter().enumerate().map(|(r_index, _cell)| {
+            col.iter().enumerate().map(|(r_index, cell)| {
+                let value: Option<Value> = match cell {
+                    CellValue::Unassigned => {None},
+                    CellValue::Assigned(field_val) => {
+                        let raw = format!("{:#?}", field_val);
+                        let without_prefix = raw.trim_start_matches("0x");
+                        let z = u64::from_str_radix(without_prefix, 16);
+                        Some(Value::U64(z.unwrap()))
+                    },
+                    CellValue::Poison(_) => {None},
+                };
                 Ident::Wire( 
                     Wire {
                         row: r_index,
                         column: c_index,
-                        value: Some(zkcir::ast::Value::U64(0)),
+                        value: value,
                         wiretype: Wiretype::Constant
                     }
                 )
@@ -1034,12 +1054,21 @@ impl<F: Field + Ord> MockProver<F> {
         }).collect();
 
         let mut instance_idents: Vec<Vec<Ident>> = self.instance.iter().enumerate().map(|(c_index, col)| {
-            col.iter().enumerate().map(|(r_index, _cell)| {
+            col.iter().enumerate().map(|(r_index, cell)| {
+                let value: Option<Value> = match cell {
+                    InstanceValue::Padding => {None},
+                    InstanceValue::Assigned(field_val) => {
+                        let raw = format!("{:#?}", field_val);
+                        let without_prefix = raw.trim_start_matches("0x");
+                        let z = u64::from_str_radix(without_prefix, 16);
+                        Some(Value::U64(z.unwrap()))
+                    },
+                };
                 Ident::Wire( 
                     Wire {
                         row: r_index,
                         column: c_index,
-                        value: Some(zkcir::ast::Value::U64(0)),
+                        value: value,
                         wiretype: Wiretype::Public
                     }
                 )
