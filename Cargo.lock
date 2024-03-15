@@ -2342,7 +2342,7 @@ dependencies = [
 [[package]]
 name = "zkcir"
 version = "0.1.0"
-source = "git+https://github.com/chriscerie/zkcir.git?branch=modifyWireStruct#7382776715445de1fffbd2630bed663c662a2a74"
+source = "git+https://github.com/chriscerie/zkcir.git#b8a34d3435f284ed0376ddecf1a9d8b0034c2e0a"
 dependencies = [
  "derive_more",
  "lazy_static",
