@@ -320,6 +320,5 @@ fn main() {
 
     // Given the correct public input, our circuit will verify.
     let prover = MockProver::run(k, &circuit, vec![public_inputs.clone()]).unwrap();
-    println!("{:#?}", prover);
     assert_eq!(prover.verify(), Ok(()));
 }
