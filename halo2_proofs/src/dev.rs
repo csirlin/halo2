@@ -1013,7 +1013,10 @@ impl<F: Field + Ord> MockProver<F> {
                     CellValue::Unassigned => {None},
                     CellValue::Assigned(field_val) => {
                         let raw = format!("{:#?}", field_val);
-                        let without_prefix = raw.trim_start_matches("0x");
+                        let mut without_prefix = raw.trim_start_matches("0x");
+                        //only use the lowest order 8 bits to avoid overflow
+                        let len = without_prefix.len();
+                        without_prefix = &without_prefix[max(0, len-8)..];
                         let z = u64::from_str_radix(without_prefix, 16);
                         Some(Value::U64(z.unwrap()))
                     },
@@ -1036,7 +1039,10 @@ impl<F: Field + Ord> MockProver<F> {
                     CellValue::Unassigned => {None},
                     CellValue::Assigned(field_val) => {
                         let raw = format!("{:#?}", field_val);
-                        let without_prefix = raw.trim_start_matches("0x");
+                        let mut without_prefix = raw.trim_start_matches("0x");
+                        //only use the lowest order 8 bits to avoid overflow
+                        let len = without_prefix.len();
+                        without_prefix = &without_prefix[max(0, len-8)..];
                         let z = u64::from_str_radix(without_prefix, 16);
                         Some(Value::U64(z.unwrap()))
                     },
@@ -1059,7 +1065,10 @@ impl<F: Field + Ord> MockProver<F> {
                     InstanceValue::Padding => {None},
                     InstanceValue::Assigned(field_val) => {
                         let raw = format!("{:#?}", field_val);
-                        let without_prefix = raw.trim_start_matches("0x");
+                        let mut without_prefix = raw.trim_start_matches("0x");
+                        //only use the lowest order 8 bits to avoid overflow
+                        let len = without_prefix.len();
+                        without_prefix = &without_prefix[max(0, len-8)..];
                         let z = u64::from_str_radix(without_prefix, 16);
                         Some(Value::U64(z.unwrap()))
                     },
@@ -1272,7 +1281,7 @@ impl<F: Field + Ord> MockProver<F> {
     
     /// build a zkcir::ast::Expression from an AbsExpression
     fn build_zkcir_expression(&self, exp: &AbsExpression<F>, a_map: &Vec<Vec<Ident>>, i_map: &Vec<Vec<Ident>>, f_map: &Vec<Vec<Ident>>) -> zkcir::ast::Expression {
-        use zkcir::ast::{Value, BinOp};
+        use zkcir::ast::{Value, BinOp, Op};
         use zkcir::ast::Expression;
         match exp {
             AbsExpression::Constant(c) => {
@@ -1300,13 +1309,11 @@ impl<F: Field + Ord> MockProver<F> {
                 };
                 Expression::Ident(i_map[*c][*r].clone())
             },
-            // TODO: add UniOP (neg)
             AbsExpression::Negated(boxed) => {
                 let subexp = &**boxed;
-                Expression::BinaryOperator { 
-                    lhs: Box::new(Expression::Value(Value::U64(0))),
-                    binop: BinOp::Subtract, 
-                    rhs: Box::new(self.build_zkcir_expression(subexp, a_map, i_map, f_map)) 
+                Expression::Unary { 
+                    op: Op::Sub, 
+                    expr: Box::new(self.build_zkcir_expression(subexp, a_map, i_map, f_map)) 
                 }
             }
             AbsExpression::Sum(boxed_left, boxed_right) => {
@@ -1328,10 +1335,18 @@ impl<F: Field + Ord> MockProver<F> {
                 }
             }
             // TODO: let value hold a string to represent F
-            AbsExpression::Scaled(boxed, _scale) => {
+            AbsExpression::Scaled(boxed, scale) => {
                 let subexp = &**boxed;
+                let raw = format!("{:#?}", scale);
+                let mut without_prefix = raw.trim_start_matches("0x");
+                //only use the lowest order 8 bits to avoid overflow
+                let len = without_prefix.len();
+                without_prefix = &without_prefix[max(0, len-8)..];
+                let z = u64::from_str_radix(without_prefix, 16);
+                let value = Value::U64(z.unwrap());
+
                 Expression::BinaryOperator { 
-                    lhs: Box::new(Expression::Value(Value::U64(0))),
+                    lhs: Box::new(Expression::Value(value)),
                     binop: BinOp::Multiply, 
                     rhs: Box::new(self.build_zkcir_expression(subexp, a_map, i_map, f_map)) 
                 }
@@ -1740,7 +1755,7 @@ impl<F: Field + Ord> MockProver<F> {
     /// Converts all Expressions in a gate instance into a Vec of AbsExpressions.
     /// If an expression simplifies to 0, it isn't included.
     fn get_abs_expressions(&self, gate: &Gate<F>, offset: i32) -> Vec<AbsExpression<F>> {
-        
+      
         let mut abs_exprs = vec![];
         for expr in gate.polynomials() {
             let abs_expr = self.get_abs_expression(expr, offset);
@@ -1843,13 +1858,15 @@ impl<F: Field + Ord> MockProver<F> {
                 *c == match_value
             } 
             AbsExpression::Advice(c, r) => {
-                self.advice[*c][*r] == CellValue::Assigned(match_value)
+                false
+                // self.advice[*c][*r] == CellValue::Assigned(match_value)
             }
             AbsExpression::Fixed(c, r) => {
                 self.fixed[*c][*r] == CellValue::Assigned(match_value) 
             }
             AbsExpression::Instance(c, r) => {
-                self.instance[*c][*r] == InstanceValue::Assigned(match_value)
+                false
+                // self.instance[*c][*r] == InstanceValue::Assigned(match_value)
             }
             _ => false
         }
