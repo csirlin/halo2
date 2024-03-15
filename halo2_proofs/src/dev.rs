@@ -978,7 +978,7 @@ impl<F: Field + Ord> MockProver<F> {
         }
 
         if let Some(order) = topological_sort(&adj_list) {
-            println!("Top order = {:#?}", order);
+            // println!("Top order = {:#?}", order);
 
             let order_no_instance: Vec<usize> = order.iter().filter(|num| match self.cellsets_vect[**num] {
                CellSet::Instance(..) => false,
@@ -986,11 +986,11 @@ impl<F: Field + Ord> MockProver<F> {
             }).map(|elem| *elem).collect();
 
             self.output(&order_no_instance, simple, true);
-            self.output(&order_no_instance, simple, false);
+            // self.output(&order_no_instance, simple, false);
 
         }
         else {
-            println!("CYCLE IN GRAPH");
+            // println!("CYCLE IN GRAPH");
             return;
         }
 
@@ -1007,12 +1007,22 @@ impl<F: Field + Ord> MockProver<F> {
         let mut e_index: usize = 0;
         // generate identifiers for each cell:
         let mut advice_idents: Vec<Vec<Ident>> = self.advice.iter().enumerate().map(|(c_index, col)| {
-            col.iter().enumerate().map(|(r_index, _cell)| {
+            col.iter().enumerate().map(|(r_index, cell)| {
+                let value: Option<Value> = match cell {
+                    CellValue::Unassigned => {None},
+                    CellValue::Assigned(field_val) => {
+                        let raw = format!("{:#?}", field_val);
+                        let without_prefix = raw.trim_start_matches("0x");
+                        let z = u64::from_str_radix(without_prefix, 16);
+                        Some(Value::U64(z.unwrap()))
+                    },
+                    CellValue::Poison(_) => {None},
+                };
                 Ident::Wire( 
                     Wire {
                         row: r_index,
                         column: c_index,
-                        value: Some(zkcir::ast::Value::U64(0)),
+                        value: value,
                         wiretype: Wiretype::Private
                     }
                 )
@@ -1020,12 +1030,22 @@ impl<F: Field + Ord> MockProver<F> {
         }).collect();
 
         let mut fixed_idents: Vec<Vec<Ident>> = self.fixed.iter().enumerate().map(|(c_index, col)| {
-            col.iter().enumerate().map(|(r_index, _cell)| {
+            col.iter().enumerate().map(|(r_index, cell)| {
+                let value: Option<Value> = match cell {
+                    CellValue::Unassigned => {None},
+                    CellValue::Assigned(field_val) => {
+                        let raw = format!("{:#?}", field_val);
+                        let without_prefix = raw.trim_start_matches("0x");
+                        let z = u64::from_str_radix(without_prefix, 16);
+                        Some(Value::U64(z.unwrap()))
+                    },
+                    CellValue::Poison(_) => {None},
+                };
                 Ident::Wire( 
                     Wire {
                         row: r_index,
                         column: c_index,
-                        value: Some(zkcir::ast::Value::U64(0)),
+                        value: value,
                         wiretype: Wiretype::Constant
                     }
                 )
@@ -1033,12 +1053,21 @@ impl<F: Field + Ord> MockProver<F> {
         }).collect();
 
         let mut instance_idents: Vec<Vec<Ident>> = self.instance.iter().enumerate().map(|(c_index, col)| {
-            col.iter().enumerate().map(|(r_index, _cell)| {
+            col.iter().enumerate().map(|(r_index, cell)| {
+                let value: Option<Value> = match cell {
+                    InstanceValue::Padding => {None},
+                    InstanceValue::Assigned(field_val) => {
+                        let raw = format!("{:#?}", field_val);
+                        let without_prefix = raw.trim_start_matches("0x");
+                        let z = u64::from_str_radix(without_prefix, 16);
+                        Some(Value::U64(z.unwrap()))
+                    },
+                };
                 Ident::Wire( 
                     Wire {
                         row: r_index,
                         column: c_index,
-                        value: Some(zkcir::ast::Value::U64(0)),
+                        value: value,
                         wiretype: Wiretype::Public
                     }
                 )
@@ -1103,8 +1132,8 @@ impl<F: Field + Ord> MockProver<F> {
                 match cellset {
                     CellSet::Equality(v) => {
                         let equality_expr = self.build_equality(v, 0, &mut advice_idents, &instance_idents, &fixed_idents);
-                        // let equality_ident = Ident::String(format!("equality_{}", e_index)); //equality_i
-                        let equality_ident = Ident::VirtualWire(VirtualWire {index: e_index, value: Some(Value::U64(0))}); //virtual_wire!(...)
+                        let equality_ident = Ident::String(format!("value_{}", e_index)); //equality_i
+                        // let equality_ident = Ident::VirtualWire(VirtualWire {index: e_index, value: Some(Value::U64(0))}); //virtual_wire!(...)
                         for cell in v {
                             let wire_ident: &mut Ident = match cell {
                                 Cell::Advice(c, r) => {
@@ -1211,26 +1240,32 @@ impl<F: Field + Ord> MockProver<F> {
 
         // build and output zkcir::Cir object to file named with timestamp
         let output = cir.build();
-        let local_time = Local::now();
-        let equality_string = 
-            if combine_equalities { "filtereq".to_string() }
-            else { "witheq".to_string() };
-        let simple_string = 
-            if simple { "simple".to_string() }
-            else { "default".to_string() };
-        let filename = format!("output/{}-{}-{}_{}-{}-{}_{}_{}", 
-            local_time.month(), local_time.day(), local_time.year(), 
-            local_time.hour(), local_time.minute(), local_time.second(), 
-            simple_string, equality_string
-        );
-        if let Err(err) = fs::write(format!("{}{}", filename, ".cir"), output.to_code_ir()) {
-            eprintln!("Error generating cir file \"{}\": {}", format!("{}{}", filename, ".cir"), err);
-        }
-        if let Err(err) = fs::write(format!("{}{}", filename, ".json"), output.to_string().unwrap()) {
-            eprintln!("Error generating json file \"{}\": {}", format!("{}{}", filename, ".json"), err);
-        }
-        if let Err(err) = fs::write(format!("{}{}", filename, ".debug"), format!("{:#?}", self)) {
-            eprintln!("Error generating debug print file \"{}\": {}", format!("{}{}", filename, ".debug"), err);
+        // let local_time = Local::now();
+        // let equality_string = 
+        //     if combine_equalities { "filtereq".to_string() }
+        //     else { "witheq".to_string() };
+        // let simple_string = 
+        //     if simple { "simple".to_string() }
+        //     else { "default".to_string() };
+        // let filename = format!("output/{}-{}-{}_{}-{}-{}_{}_{}", 
+        //     local_time.month(), local_time.day(), local_time.year(), 
+        //     local_time.hour(), local_time.minute(), local_time.second(), 
+        //     simple_string, equality_string
+        // );
+        // if let Err(err) = fs::write(format!("{}{}", filename, ".cir"), output.to_code_ir()) {
+        //     eprintln!("Error generating cir file \"{}\": {}", format!("{}{}", filename, ".cir"), err);
+        // }
+        // if let Err(err) = fs::write(format!("{}{}", filename, ".json"), output.to_string().unwrap()) {
+        //     eprintln!("Error generating json file \"{}\": {}", format!("{}{}", filename, ".json"), err);
+        // }
+        // if let Err(err) = fs::write(format!("{}{}", filename, ".debug"), format!("{:#?}", self)) {
+        //     eprintln!("Error generating debug print file \"{}\": {}", format!("{}{}", filename, ".debug"), err);
+        // }
+
+        //print to console with formatting
+        if let Ok(output) = output.to_cli_string()
+        {
+            println!("{output:?}");
         }
     }
     
@@ -1975,9 +2010,9 @@ impl<F: Field + Ord> MockProver<F> {
             tracker_instance,
         };
 
-        println!("before synthesize in dev.rs");
+        // println!("before synthesize in dev.rs");
         ConcreteCircuit::FloorPlanner::synthesize(&mut prover, circuit, config, constants)?;
-        println!("after synthesize in dev.rs");
+        // println!("after synthesize in dev.rs");
         let (cs, selector_polys) = prover.cs.compress_selectors(prover.selectors.clone());
         prover.cs = cs;
         prover.fixed.extend(selector_polys.into_iter().map(|poly| {
